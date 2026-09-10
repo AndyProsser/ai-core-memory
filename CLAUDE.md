@@ -35,13 +35,19 @@ are load-bearing for everything else in the repo.
 | A design/process change to the dream cycle           | `docs/ARCHITECTURE.md`                                                         |
 | Anything about running the memory hub                | `docs/DEPLOYMENT.md` (containers, k3s/k8s, backups)                            |
 | Anything about installing skills/MCP into an AI tool | `docs/DISTRIBUTION.md` (plugins, `.mcp.json`, Claude.ai connectors)            |
+| Anything about tokens, roles, visibility, or auth    | `docs/SECURITY.md`                                                             |
 | Editor/tooling config                                | `.vscode/`, `.editorconfig`, `.gitattributes` — keep these boring and standard |
 
 ## Scope of changes
 
 Don't start implementing the memory hub service or other roadmap items (see
 ARCHITECTURE.md → Roadmap) unless explicitly asked. The hub's design — Python, FastAPI,
-SQLite/SQLModel, the data model, the user/team/token access model — is decided (see
-ARCHITECTURE.md § Memory hub), but no code exists yet; treat "the design is decided" and
-"go build it" as two separate asks. Prefer extending the plain-file format, the schema
-templates, and the `dream` skill, since those are what's actually in use today.
+SQLite/SQLModel, the data model, the user/team/token access model, and the security
+model in `docs/SECURITY.md` (token hardening, visibility/roles, local + OIDC auth) — is
+decided, but no code exists yet; treat "the design is decided" and "go build it" as two
+separate asks. This matters more for anything security-related than anywhere else in
+this repo: don't improvise a simplified auth/token scheme "for now" if asked to
+implement part of the hub — follow `docs/SECURITY.md` as written, or raise the
+discrepancy, rather than shipping something weaker. Prefer extending the plain-file
+format, the schema templates, and the `dream` skill, since those are what's actually in
+use today.

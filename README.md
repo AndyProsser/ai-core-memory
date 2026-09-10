@@ -52,6 +52,7 @@ you already knew.
 docs/ARCHITECTURE.md    full design: scopes, memory record schema, the dream pipeline
 docs/DEPLOYMENT.md      running the memory hub: Docker/Podman/k3s/k8s
 docs/DISTRIBUTION.md    getting skills + the hub into Claude Code and Claude.ai
+docs/SECURITY.md        API token hardening, visibility/roles, local + OIDC auth
 memory/schema/          canonical templates for each memory type
 memory/README.md        where runtime memory data lives and what is/isn't committed
 CLAUDE.md               AI working instructions for this repo

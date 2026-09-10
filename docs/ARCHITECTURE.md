@@ -198,44 +198,49 @@ SQLAlchemy layer if that ever changes.
 
 ### Data model
 
-| Table              | Purpose                                                                                                                                                                             |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users`            | id, email, password_hash, is_admin, created_at.                                                                                                                                     |
-| `teams`            | id, name, slug, created_at.                                                                                                                                                         |
-| `team_members`     | team_id, user_id, role (`owner`/`member`) — who's on a team, opt-in per "Team scope is opt-in."                                                                                     |
-| `projects`         | id, slug, team_id (nullable), owner_user_id (nullable) — a project belongs to a team or a single person, never both.                                                                |
-| `api_tokens`       | id, user_id, token_hash, label, created_at, last_used_at, revoked_at — the raw token is shown once at creation and only its hash is stored, the same pattern as a GitHub PAT.       |
-| `memory_records`   | id, scope, type, confidence, name, description, body (markdown), project_id/team_id/user_id (whichever applies to its scope), created_at, updated_at, source.                       |
-| `memory_revisions` | id, memory_record_id, body snapshot, confidence, changed_by, changed_at, change_note, change_source (`dream-cycle`/`mcp-write`/`import`) — the append-only history mentioned above. |
+| Table               | Purpose                                                                                                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instance_settings` | singleton row: `deployment_mode` (`solo`/`team`/`multi_team`), enabled auth providers, default token expiry.                                                           |
+| `users`             | id, email, password_hash (nullable if OIDC-only), auth_provider, external_id, is_admin, created_at.                                                                    |
+| `teams`             | id, name, slug, created_at.                                                                                                                                            |
+| `team_members`      | team_id, user_id, role (`owner`/`member`) — who's on a team, opt-in per "Team scope is opt-in."                                                                        |
+| `projects`          | id, slug, team_id (nullable), owner_user_id (nullable), visibility (`private`/`team`/`public`) — see SECURITY.md § Visibility.                                         |
+| `api_tokens`        | id, user_id, token_hash, label, project_ids (scope), access_level (`read_only`/`read_write`), expires_at, created_at, last_used_at, revoked_at.                        |
+| `memory_records`    | id, scope, type, confidence, name, description, body (markdown), project_id/team_id/user_id (whichever applies to its scope), created_at, updated_at, source.          |
+| `memory_revisions`  | id, memory_record_id, body snapshot, confidence, changed_by_user_id, changed_by_token_id, changed_at, change_note, change_source (`dream-cycle`/`mcp-write`/`import`). |
 
 ### Access control
 
 Same partition rules as the rest of this document, just enforced in a multi-user
-setting instead of by file location:
+setting instead of by file location. Full detail — token security, the visibility
+model behind `solo`/`team`/`multi_team` deployments, and exactly what `admin`/`owner`/
+`member` can and can't do — lives in [docs/SECURITY.md](SECURITY.md); the essentials:
 
-- **User-scope records are private to their owner**, full stop — not even a team or
-  workspace admin can browse another user's personal memory by default. Admin rights
-  cover accounts, teams, and projects; they are not a backdoor into personal scope. This
-  is the same principle as "user scope never enters a shared repo," just enforced at the
-  database layer instead of by `.gitignore`.
+- **User-scope records are private to their owner**, full stop — not even an instance
+  admin can browse another user's personal memory by default. This is the same
+  principle as "user scope never enters a shared repo," just enforced at the database
+  layer instead of by `.gitignore`.
 - **Team-scope records are visible/writable to that team's members** (`team_members`),
   matching "team scope is opt-in" — joining a team is what grants access, nothing implicit.
-- **Project-scope records** are visible/writable to a project's team (if `team_id` is
-  set) or its individual owner (if it's a personal project).
+- **Project-scope records** are visible/writable per the project's `visibility`
+  (`private`/`team`/`public`) and its owning team or individual owner — see
+  [docs/SECURITY.md § Visibility](SECURITY.md#visibility--deployment-personas--one-schema-progressive-disclosure).
 - **`admin` is a platform role**, not a memory-access override — it manages users, teams,
-  and tokens, and can see project/team scope for teams it's actually a member of, same as
-  anyone else.
+  and instance settings, and sees project/team scope for teams it's actually a member of,
+  same as anyone else.
 
 ### API surface
 
-Two audiences, two auth methods, one process:
+Two audiences, two auth methods, one process. Authentication itself (local accounts,
+OIDC, how API tokens are scoped and hardened) is covered in
+[docs/SECURITY.md](SECURITY.md) — this is just what's reachable once you're authenticated:
 
-- **Human REST API (session-cookie auth)** — for people, not AI clients: login/logout,
-  team and membership management, minting/revoking API tokens (this is how a human
-  hands an AI client credentials), and browsing memories with their revision history so
-  a person can actually review what's been remembered about them. `GET/POST /teams`,
-  `GET/POST /tokens`, `GET /memories`, `GET /memories/{id}`, admin-only `GET/POST/DELETE
-  /users`.
+- **Human REST API (session-cookie or OIDC-backed auth)** — for people, not AI clients:
+  login/logout, team and membership management, minting/revoking API tokens (this is how
+  a human hands an AI client credentials), and browsing memories with their revision
+  history so a person can actually review what's been remembered about them.
+  `GET/POST /teams`, `GET/POST /tokens`, `GET /memories`, `GET /memories/{id}`,
+  admin-only `GET/POST/DELETE /users`.
 - **MCP surface (bearer API-token auth)** — for AI clients, and the only path meant for
   routine writes: `memory.search`, `memory.write`, `memory.sync` (bulk upsert from a
   repo's `memory/data/` after a dream pass), `memory.consolidate`. The hub stays
@@ -316,7 +321,13 @@ Ordered by how much is built vs. planned:
 
 - [ ] Memory hub service: FastAPI + SQLModel + SQLite, per "Memory hub" above — stack is
       decided; schema, auth, and endpoints still need an actual implementation
-- [ ] Users/teams/membership + admin role, with API-token issuance for MCP clients
+- [ ] Users/teams/membership + admin/owner/member roles, `deployment_mode`
+      (`solo`/`team`/`multi_team`) and project `visibility`, per
+      [docs/SECURITY.md](SECURITY.md)
+- [ ] Scoped, expiring, per-token-auditable API tokens per
+      [docs/SECURITY.md § API tokens](SECURITY.md#api-tokens-minimizing-the-blast-radius-of-a-leak)
+- [ ] Local + OIDC authentication, both available from the first release, per
+      [docs/SECURITY.md § Authentication](SECURITY.md#authentication-local-and-oidc-both-from-day-one)
 - [ ] MCP surface (`memory.search` / `memory.write` / `memory.sync` / `memory.consolidate`)
       with server-side confidence-tier enforcement
 - [ ] Import/export endpoints for backup/restore (markdown + frontmatter), gated to
