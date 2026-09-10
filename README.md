@@ -61,10 +61,12 @@ AGENTS.md               pointer to CLAUDE.md for non-Claude coding assistants
 Early / spec stage. What exists today: the scope/type/confidence model for a memory
 record, and a `/dream` skill you can run manually inside Claude Code or Claude.ai to
 consolidate a session into memory files in this repo. What's roadmap: a small,
-self-hosted **memory hub** — a SQLite-backed service exposed over MCP — that aggregates
-project/team memory across every repo you work in, so cross-project questions don't
-require having every repo cloned side by side. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#roadmap) for the full list.
+self-hosted **memory hub** — Python, FastAPI, SQLite — with per-user/team accounts and
+API tokens, that aggregates project/team memory across every repo you work in so
+cross-project questions don't require having every repo cloned side by side. The design
+is settled (see [docs/ARCHITECTURE.md § Memory hub](docs/ARCHITECTURE.md#memory-hub-cross-project-store));
+no code exists yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#roadmap) for the
+full list.
 
 ## Getting started (Claude Code / Claude.ai today)
 

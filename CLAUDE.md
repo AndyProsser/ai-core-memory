@@ -37,8 +37,9 @@ are load-bearing for everything else in the repo.
 
 ## Scope of changes
 
-Don't build the memory hub service or other roadmap items (see ARCHITECTURE.md →
-Roadmap) unless explicitly asked — the hub's *design* is decided, but its stack
-(language, framework, auth model) isn't, so starting an implementation would mean
-guessing at decisions that belong to the user. Prefer extending the plain-file format,
-the schema templates, and the `dream` skill, since those are what's actually in use today.
+Don't start implementing the memory hub service or other roadmap items (see
+ARCHITECTURE.md → Roadmap) unless explicitly asked. The hub's design — Python, FastAPI,
+SQLite/SQLModel, the data model, the user/team/token access model — is decided (see
+ARCHITECTURE.md § Memory hub), but no code exists yet; treat "the design is decided" and
+"go build it" as two separate asks. Prefer extending the plain-file format, the schema
+templates, and the `dream` skill, since those are what's actually in use today.

@@ -185,26 +185,110 @@ deliberately a copy, not the source of truth: every record it holds also exists 
 plain markdown file in some repo's `memory/data/`, so losing the hub loses convenience,
 not data — it can be rebuilt by re-syncing from the repos that feed it.
 
-- **Storage.** An embedded database (SQLite is the default assumption) with one row per
-  record _revision_ — an append-only history, since records arrive from many repos that
-  don't share a single git timeline the way one project's own `memory/data/` does.
-- **Interface.** Exposed as MCP tools — `memory.search`, `memory.write`,
-  `memory.consolidate`, and `memory.sync` — so any MCP-capable client can query across
-  every project a person works in, not just the one it's currently sitting in.
-- **Sync, not takeover.** A repo's own `memory/data/` stays authoritative and
-  git-tracked; a `hub-sync` step (run after `dream`, or on its own schedule) pushes
-  new/changed records up, tagged with their originating `project_id`/repo and confidence
-  tier, and can pull cross-project context back down into a session.
-- **Conflicts obey the same confidence rule.** The hub doesn't get to be looser than a
-  single repo: an `observed` fragment from Project A never silently overwrites an
-  `established` record already in the hub, whatever its origin — flag, don't clobber
-  (see "Confidence & mutability" above).
-- **Deployment stance.** Self-hosted by the person or team that owns the memory, sized
-  for one person or one team, not a shared multi-tenant service — that's the point of
-  "own everything": your memory shouldn't live somewhere you don't control.
+**Stack: Python + SQLite.** Python because it's the language every AI/MCP tooling
+ecosystem already speaks natively — the dream skill's classification logic, the MCP SDK,
+and any future ML-assisted dedupe all live in the same runtime with no cross-language
+glue. FastAPI serves both the human-facing REST API and the MCP endpoint (via the
+official MCP Python SDK's ASGI transport) from one process, backed by SQLite through
+SQLModel (SQLAlchemy + Pydantic, so the same models validate API input and hit the DB)
+with Alembic for schema migrations. This isn't a big-data problem — a household's or
+team's memory store is thousands of small records, not millions — so SQLite's limits
+are never the binding constraint; Postgres remains a drop-in swap later via the same
+SQLAlchemy layer if that ever changes.
 
-This section is architecture, not implementation — the stack (language, exact schema,
-auth model) is still an open decision; see Roadmap.
+### Data model
+
+| Table              | Purpose                                                                                                                                                                             |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`            | id, email, password_hash, is_admin, created_at.                                                                                                                                     |
+| `teams`            | id, name, slug, created_at.                                                                                                                                                         |
+| `team_members`     | team_id, user_id, role (`owner`/`member`) — who's on a team, opt-in per "Team scope is opt-in."                                                                                     |
+| `projects`         | id, slug, team_id (nullable), owner_user_id (nullable) — a project belongs to a team or a single person, never both.                                                                |
+| `api_tokens`       | id, user_id, token_hash, label, created_at, last_used_at, revoked_at — the raw token is shown once at creation and only its hash is stored, the same pattern as a GitHub PAT.       |
+| `memory_records`   | id, scope, type, confidence, name, description, body (markdown), project_id/team_id/user_id (whichever applies to its scope), created_at, updated_at, source.                       |
+| `memory_revisions` | id, memory_record_id, body snapshot, confidence, changed_by, changed_at, change_note, change_source (`dream-cycle`/`mcp-write`/`import`) — the append-only history mentioned above. |
+
+### Access control
+
+Same partition rules as the rest of this document, just enforced in a multi-user
+setting instead of by file location:
+
+- **User-scope records are private to their owner**, full stop — not even a team or
+  workspace admin can browse another user's personal memory by default. Admin rights
+  cover accounts, teams, and projects; they are not a backdoor into personal scope. This
+  is the same principle as "user scope never enters a shared repo," just enforced at the
+  database layer instead of by `.gitignore`.
+- **Team-scope records are visible/writable to that team's members** (`team_members`),
+  matching "team scope is opt-in" — joining a team is what grants access, nothing implicit.
+- **Project-scope records** are visible/writable to a project's team (if `team_id` is
+  set) or its individual owner (if it's a personal project).
+- **`admin` is a platform role**, not a memory-access override — it manages users, teams,
+  and tokens, and can see project/team scope for teams it's actually a member of, same as
+  anyone else.
+
+### API surface
+
+Two audiences, two auth methods, one process:
+
+- **Human REST API (session-cookie auth)** — for people, not AI clients: login/logout,
+  team and membership management, minting/revoking API tokens (this is how a human
+  hands an AI client credentials), and browsing memories with their revision history so
+  a person can actually review what's been remembered about them. `GET/POST /teams`,
+  `GET/POST /tokens`, `GET /memories`, `GET /memories/{id}`, admin-only `GET/POST/DELETE
+  /users`.
+- **MCP surface (bearer API-token auth)** — for AI clients, and the only path meant for
+  routine writes: `memory.search`, `memory.write`, `memory.sync` (bulk upsert from a
+  repo's `memory/data/` after a dream pass), `memory.consolidate`. The hub stays
+  deliberately "dumb": it enforces access control and the confidence-tier mutation rule
+  server-side, but the actual classification/merge _reasoning_ stays in the `dream`
+  skill running client-side, in whatever AI tool is driving it. That keeps the hub
+  free of any dependency on a specific model or vendor.
+
+### Import / export — backup only, never the routine write path
+
+`POST /memories/import` and `GET /memories/export` move records in and out as the same
+markdown + YAML frontmatter used everywhere else in this repo — for backing up the
+store, seeding a fresh instance, or migrating between machines. They are explicitly
+**not** meant as a routine editing path: the whole point of this project is that memory
+changes happen through an AI reasoning about what's worth remembering, not through a
+human hand-editing rows or files directly. To keep that true even during import, an
+imported record that conflicts with an existing one still goes through the same
+confidence-tier check as any other write (an import can't silently clobber an
+`established` record any more than a careless MCP call can) — it lands as a flagged
+revision for a human to resolve, not a blind overwrite. Both endpoints require
+project/team ownership or admin rights.
+
+### Deployment stance
+
+Self-hosted by the person or team that owns the memory, sized for one person or one
+team, not a shared multi-tenant SaaS product — that's the point of "own everything":
+your memory shouldn't live somewhere you don't control. A single Python process plus one
+SQLite file is the whole deployment; Docker is a convenience, not a requirement.
+
+This section is architecture, not implementation yet — see Roadmap.
+
+## Instruction-file placement across tools
+
+Most AI coding tools already read a repo-local instructions file (`CLAUDE.md`,
+`.cursor/rules/`, `.windsurfrules`, `.github/copilot-instructions.md`, or the emerging
+generic `AGENTS.md`), and that maps directly onto **project scope** — it's exactly what
+this repo already does with `CLAUDE.md` and `AGENTS.md`. No new mechanism needed there.
+
+**User scope is where tools genuinely differ**, and mostly don't offer a file at all:
+Claude Code reads a personal `~/.claude/CLAUDE.md` in addition to the repo-local one —
+which conveniently is _already_ the project-vs-user split this document defines, just
+expressed as two files instead of two records. Other tools (ChatGPT's custom
+instructions, Copilot's account settings, most IDE-level AI settings) keep user-level
+preferences in account settings, not a file at all, so there's nothing on disk for a
+sync mechanism to target.
+
+Given that, the practical approach is: don't chase every vendor's proprietary settings
+surface automatically. Keep the canonical record in the hub / per-repo markdown, and
+generate a specific tool's instruction file **on request, per tool, when it's actually
+useful** — a "compile" step, not a background sync (see Roadmap). Where a tool has
+nothing file-based to target (ChatGPT, Copilot account settings), the honest answer is
+that user-scope memory reaches it through that tool's own MCP support querying the hub
+directly, not through a materialized file.
 
 ## Interoperability strategy
 
@@ -227,8 +311,13 @@ Ordered by how much is built vs. planned:
 
 ## Roadmap
 
-- [ ] Memory hub service (SQLite + REST, exposed via MCP) — architecture decided above;
-      language/framework/auth model still open
+- [ ] Memory hub service: FastAPI + SQLModel + SQLite, per "Memory hub" above — stack is
+      decided; schema, auth, and endpoints still need an actual implementation
+- [ ] Users/teams/membership + admin role, with API-token issuance for MCP clients
+- [ ] MCP surface (`memory.search` / `memory.write` / `memory.sync` / `memory.consolidate`)
+      with server-side confidence-tier enforcement
+- [ ] Import/export endpoints for backup/restore (markdown + frontmatter), gated to
+      project/team owners and admins, still routed through confidence-tier conflict checks
 - [ ] `hub-sync` skill or process to push repo records to the hub and pull cross-project
       context back into a session
 - [ ] Confidence-tier enforcement wired into the `dream` skill's conflict handling
@@ -236,4 +325,6 @@ Ordered by how much is built vs. planned:
 - [ ] Reference implementation of the dream pipeline outside a single chat session
       (e.g. run against exported transcripts from multiple tools in one pass)
 - [ ] Promotion workflow with an explicit human approval step (not just "ask in chat")
+- [ ] On-request "compile" step to generate a specific tool's instruction file
+      (`.cursor/rules/`, `.windsurfrules`, etc.) from hub/repo memory
 - [ ] Adapter notes for at least one non-Claude assistant that supports MCP
