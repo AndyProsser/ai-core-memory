@@ -1,0 +1,12 @@
+# LF everywhere, regardless of OS or local git config.
+* text=auto eol=lf
+
+# Binary files: leave untouched, no text normalization.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

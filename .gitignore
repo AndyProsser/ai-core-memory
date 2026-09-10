@@ -1,0 +1,30 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# Node (future MCP server / tooling)
+node_modules/
+dist/
+.env
+.env.*
+
+# Python (future MCP server / tooling)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Personal / ephemeral memory scopes — never shared via git.
+# See docs/ARCHITECTURE.md § Partition & cross-talk rules.
+memory/data/user/
+memory/data/session/

@@ -1,0 +1,19 @@
+{
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "files.trimFinalNewlines": true,
+  "editor.rulers": [100],
+  "[markdown]": {
+    "editor.wordWrap": "on",
+    "files.trimTrailingWhitespace": false
+  },
+  "search.exclude": {
+    "memory/data/user": true,
+    "memory/data/session": true
+  },
+  "markdownlint.config": {
+    "MD013": false,
+    "MD033": false
+  }
+}
