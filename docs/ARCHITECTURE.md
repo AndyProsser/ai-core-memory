@@ -19,7 +19,7 @@ produces and maintains them. If you're proposing a change to either, start here.
   curated, and human-legible by design — retrieval is "read the relevant files," not
   semantic search over a large corpus. Nothing stops a future MCP server from adding a
   search index on top of these files, but the source of truth stays plain text.
-- Not a full session/transcript archive. Raw chat logs are the *input* to a dream cycle,
+- Not a full session/transcript archive. Raw chat logs are the _input_ to a dream cycle,
   not the memory itself — the point of dreaming is to compress them away.
 - Not a replacement for git history, code comments, or project docs. Memory records
   hold things that aren't derivable by reading the code or the commit log (see
@@ -30,14 +30,14 @@ produces and maintains them. If you're proposing a change to either, start here.
 **Scope** — who/what a memory record is visible to. Scopes nest from narrowest to
 broadest and are the primary defense against cross-talk:
 
-| Scope     | Lives                                   | Committed to git? | Example |
-|-----------|------------------------------------------|--------------------|---------|
-| `session` | in-memory / a single chat only           | never              | "user is debugging the flaky test right now" |
-| `project` | `memory/data/project/` in this repo      | yes                | "this service's retries must be idempotent — see incident 2026-02" |
-| `team`    | `memory/data/team/` in this repo, or a shared team repo | yes (opt-in) | "we use trunk-based dev, no long-lived feature branches" |
-| `user`    | outside any repo, e.g. `~/.ai-memory/`   | no (personal, machine-local) | "prefers terse responses, ten years of Go experience" |
+| Scope     | Lives                                                   | Committed to git?            | Example                                                            |
+| --------- | ------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------ |
+| `session` | in-memory / a single chat only                          | never                        | "user is debugging the flaky test right now"                       |
+| `project` | `memory/data/project/` in this repo                     | yes                          | "this service's retries must be idempotent — see incident 2026-02" |
+| `team`    | `memory/data/team/` in this repo, or a shared team repo | yes (opt-in)                 | "we use trunk-based dev, no long-lived feature branches"           |
+| `user`    | outside any repo, e.g. `~/.ai-memory/`                  | no (personal, machine-local) | "prefers terse responses, ten years of Go experience"              |
 
-A record's scope is a fact about *where it's allowed to be read from*, not about who
+A record's scope is a fact about _where it's allowed to be read from_, not about who
 wrote it. A user-scope fact can be learned while working in a specific project, but it
 only becomes user-scope once the dream cycle promotes it there — see "Promotion" below.
 
@@ -45,7 +45,7 @@ only becomes user-scope once the dream cycle promotes it there — see "Promotio
 memory taxonomy proven out in Claude Code's own memory tool:
 
 - `user` — role, expertise, preferences, how they like to work.
-- `feedback` — corrections and confirmations about *how to do the work* ("don't mock
+- `feedback` — corrections and confirmations about _how to do the work_ ("don't mock
   the DB in integration tests," "yes, one bundled PR was right here").
 - `project` — decisions, ongoing initiatives, deadlines, incident context that isn't
   derivable from the code itself.
@@ -62,7 +62,7 @@ description: Retries on the payments webhook must be idempotent — replay cause
 metadata:
   type: project
   scope: project
-  project_id: ai-core-memory        # or whichever repo/project this belongs to
+  project_id: ai-core-memory # or whichever repo/project this belongs to
   created: 2026-02-11
   source: dream-cycle
 ---
@@ -112,7 +112,7 @@ today as a Claude Skill ([`.claude/skills/dream/SKILL.md`](../.claude/skills/dre
 that runs inside a single conversation; the pipeline it follows is platform-agnostic and
 is meant to be re-implemented by other adapters later (see Roadmap).
 
-```
+```text
 harvest → classify → merge/dedupe → flag conflicts → promote (human-gated) → prune → reindex
 ```
 

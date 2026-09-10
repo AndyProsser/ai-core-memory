@@ -27,12 +27,12 @@ are load-bearing for everything else in the repo.
 
 ## Where things go
 
-| Adding...                                   | Goes in |
-|----------------------------------------------|---------|
-| A new Claude Skill                            | `.claude/skills/<name>/SKILL.md` |
-| A new memory type or scope                    | `docs/ARCHITECTURE.md` first, then a template in `memory/schema/` |
-| A design/process change to the dream cycle    | `docs/ARCHITECTURE.md` |
-| Editor/tooling config                         | `.vscode/`, `.editorconfig`, `.gitattributes` — keep these boring and standard |
+| Adding...                                  | Goes in                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------ |
+| A new Claude Skill                         | `.claude/skills/<name>/SKILL.md`                                               |
+| A new memory type or scope                 | `docs/ARCHITECTURE.md` first, then a template in `memory/schema/`              |
+| A design/process change to the dream cycle | `docs/ARCHITECTURE.md`                                                         |
+| Editor/tooling config                      | `.vscode/`, `.editorconfig`, `.gitattributes` — keep these boring and standard |
 
 ## Scope of changes
 
