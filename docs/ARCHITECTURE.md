@@ -41,8 +41,9 @@ A record's scope is a fact about _where it's allowed to be read from_, not about
 wrote it. A user-scope fact can be learned while working in a specific project, but it
 only becomes user-scope once the dream cycle promotes it there — see "Promotion" below.
 
-**Type** — what kind of content the record holds, independent of scope. Reused from the
-memory taxonomy proven out in Claude Code's own memory tool:
+**Type** — what kind of content the record holds, independent of scope. The first four
+are reused from the memory taxonomy proven out in Claude Code's own memory tool; `intent`
+and `rule` extend it for this project:
 
 - `user` — role, expertise, preferences, how they like to work.
 - `feedback` — corrections and confirmations about _how to do the work_ ("don't mock
@@ -51,9 +52,18 @@ memory taxonomy proven out in Claude Code's own memory tool:
   derivable from the code itself.
 - `reference` — pointers to where live information already lives (a Linear project, a
   Grafana dashboard, a Slack channel) — not the information itself.
+- `intent` — a goal or direction being worked toward ("migrating off the legacy auth
+  service by Q3"), distinct from a fact that's already settled — records the _why we're
+  heading this way_, so future sessions don't optimize for a direction that's since changed.
+- `rule` — a constraint stated forcefully enough that it isn't just a preference ("never
+  merge to `main` without a green build"). A rule that's only been observed once is
+  really just `feedback`; `rule` is for things the user or team wants to hold the line on.
 
-Every record's frontmatter carries both fields, plus enough metadata to keep partitions
-honest:
+**Confidence** — a third, independent dimension: how much evidence it should take to
+change a record. See "Confidence & mutability" below.
+
+Every record's frontmatter carries type, scope, and confidence, plus enough metadata to
+keep partitions honest:
 
 ```markdown
 ---
@@ -62,6 +72,7 @@ description: Retries on the payments webhook must be idempotent — replay cause
 metadata:
   type: project
   scope: project
+  confidence: confirmed
   project_id: ai-core-memory # or whichever repo/project this belongs to
   created: 2026-02-11
   source: dream-cycle
@@ -75,6 +86,28 @@ before this can be closed as fixed.
 ```
 
 See [`memory/schema/`](../memory/schema/) for one template per type.
+
+## Confidence & mutability
+
+A memory record is what we currently believe is true or best — not a fixed fact. Some
+beliefs are cheap to revise; others should take real evidence to overturn. Every record
+carries a `confidence` tier that governs how much friction the dream cycle applies
+before changing it:
+
+| Confidence    | Meaning                                                          | To change it                                                                                                                                             |
+| ------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `observed`    | Seen once, or inferred rather than stated outright.              | The next dream cycle can freely revise or drop it — no confirmation needed.                                                                              |
+| `confirmed`   | The user stated it directly, or it recurred across sessions.     | Can be updated by a later dream cycle, but the pass must call it out in its summary rather than changing it silently.                                    |
+| `established` | Reinforced repeatedly, or explicitly marked durable by the user. | Requires explicit human confirmation before being changed or removed, even if new information seems to contradict it — flag it and ask, don't overwrite. |
+
+New records default to `observed`. A record earns `confirmed` when the same fact is
+independently reinforced in a later session, and `established` only when the user
+explicitly says it should be treated as settled — still reversible, just never silently.
+
+This tier is orthogonal to scope and type: an `established` record can exist at any
+scope, and a `rule` doesn't automatically outrank a `feedback` record — confidence is
+what governs mutability, not type. It's also distinct from git history: git tells you
+_when_ a record changed, confidence tells you _how much it should take_ to change it again.
 
 ## What NOT to remember
 
@@ -118,19 +151,60 @@ harvest → classify → merge/dedupe → flag conflicts → promote (human-gate
 
 1. **Harvest** — gather the session's residue: what was decided, corrected, learned, or
    discovered, plus any existing memory index so the pass knows what's already known.
-2. **Classify** — sort fragments by type (user/feedback/project/reference) and by the
-   scope they were learned in.
+2. **Classify** — sort fragments by type (user/feedback/project/reference/intent/rule)
+   and by the scope they were learned in. Assign an initial confidence too: `observed`
+   by default, `confirmed` if the user stated it directly or it corroborates an existing
+   record. `rule` and `intent` records usually start at `confirmed` or higher — they're
+   deliberately stated, not merely noticed.
 3. **Merge/dedupe** — check each fragment against existing records at the same scope.
    Update in place rather than duplicating; a memory system that only ever appends is
    not a memory system, it's a log.
-4. **Flag conflicts** — if new information contradicts an existing record, surface it
-   rather than silently overwriting. Memory that's silently wrong is worse than no memory.
+4. **Flag conflicts** — if new information contradicts an existing record, treat it
+   according to that record's confidence tier (see "Confidence & mutability"):
+   `observed` records can be updated in place, `confirmed` records can be updated but the
+   pass must say so in its summary, and `established` records must never be silently
+   changed — surface the conflict and let the user decide. Memory that's silently wrong
+   is worse than no memory.
 5. **Promote (human-gated)** — if something learned at `project` scope looks like it
    actually belongs at `team` or `user` scope (a working-style preference surfaced while
    debugging, say), propose the promotion; don't execute it without confirmation.
 6. **Prune** — remove or mark stale records that later information has invalidated.
 7. **Reindex** — keep a short index (mirroring `MEMORY.md` in Claude Code's own memory
    tool) so a future session can see what exists without reading every file.
+
+## Memory hub (cross-project store)
+
+Per-repo `memory/data/` answers "what does this project know." It doesn't answer "what
+have I learned across every project I work in" — that requires seeing across repos you
+may not even have cloned side by side, which is what the **memory hub** is for.
+
+The hub is a small, self-hosted service — not a multi-tenant cloud product — holding a
+**replicated, queryable copy** of project- and team-scope records (and any user-scope
+records a person opts to sync), aggregated from every repo that pushes to it. It is
+deliberately a copy, not the source of truth: every record it holds also exists as a
+plain markdown file in some repo's `memory/data/`, so losing the hub loses convenience,
+not data — it can be rebuilt by re-syncing from the repos that feed it.
+
+- **Storage.** An embedded database (SQLite is the default assumption) with one row per
+  record _revision_ — an append-only history, since records arrive from many repos that
+  don't share a single git timeline the way one project's own `memory/data/` does.
+- **Interface.** Exposed as MCP tools — `memory.search`, `memory.write`,
+  `memory.consolidate`, and `memory.sync` — so any MCP-capable client can query across
+  every project a person works in, not just the one it's currently sitting in.
+- **Sync, not takeover.** A repo's own `memory/data/` stays authoritative and
+  git-tracked; a `hub-sync` step (run after `dream`, or on its own schedule) pushes
+  new/changed records up, tagged with their originating `project_id`/repo and confidence
+  tier, and can pull cross-project context back down into a session.
+- **Conflicts obey the same confidence rule.** The hub doesn't get to be looser than a
+  single repo: an `observed` fragment from Project A never silently overwrites an
+  `established` record already in the hub, whatever its origin — flag, don't clobber
+  (see "Confidence & mutability" above).
+- **Deployment stance.** Self-hosted by the person or team that owns the memory, sized
+  for one person or one team, not a shared multi-tenant service — that's the point of
+  "own everything": your memory shouldn't live somewhere you don't control.
+
+This section is architecture, not implementation — the stack (language, exact schema,
+auth model) is still an open decision; see Roadmap.
 
 ## Interoperability strategy
 
@@ -143,17 +217,22 @@ Ordered by how much is built vs. planned:
 3. **Instruction-file adapters (today, thin).** `CLAUDE.md` for Claude, `AGENTS.md` as
    a pointer for other coding assistants that check that convention (Cursor, Windsurf,
    etc.) — both just point back at this document and `memory/schema/`.
-4. **MCP server (roadmap).** A server exposing `memory.search`, `memory.write`, and
-   `memory.consolidate` as tools, backed by the same on-disk format, so any MCP client —
-   not just Claude — can read and write the store without repo/filesystem access.
-5. **Sync/merge across machines (roadmap).** Team- and project-scope memory already
-   travels via the repo's own git remote. User-scope memory is machine-local by design
-   today; syncing it across a person's own machines is a later, separate problem
-   (likely another git repo the user owns, not this one).
+4. **Memory hub + MCP (roadmap).** The self-hosted hub described above, reachable via
+   MCP tools — the way a non-filesystem AI client, or a client working in a project that
+   hasn't cloned every other project, gets access to memory beyond its own repo.
+5. **Personal cross-machine sync (roadmap, optional).** If a hub isn't running, plain
+   `user` scope can still sync across a person's own machines the simple way — a
+   personal git repo they own. The hub is for cross-project aggregation; it isn't
+   required just to carry personal memory between two laptops.
 
 ## Roadmap
 
-- [ ] MCP server (`memory.search` / `memory.write` / `memory.consolidate`)
+- [ ] Memory hub service (SQLite + REST, exposed via MCP) — architecture decided above;
+      language/framework/auth model still open
+- [ ] `hub-sync` skill or process to push repo records to the hub and pull cross-project
+      context back into a session
+- [ ] Confidence-tier enforcement wired into the `dream` skill's conflict handling
+      (documented above; the skill already assigns and checks tiers manually)
 - [ ] Reference implementation of the dream pipeline outside a single chat session
       (e.g. run against exported transcripts from multiple tools in one pass)
 - [ ] Promotion workflow with an explicit human approval step (not just "ask in chat")

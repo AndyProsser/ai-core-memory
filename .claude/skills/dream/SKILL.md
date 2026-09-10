@@ -36,13 +36,22 @@ to it forever.
 
 For each fragment, assign:
 
-- **Type** — `user`, `feedback`, `project`, or `reference` (see
+- **Type** — `user`, `feedback`, `project`, `reference`, `intent`, or `rule` (see
   [docs/ARCHITECTURE.md § Vocabulary](../../../docs/ARCHITECTURE.md#vocabulary) for
   what each means).
 - **Scope** — `session`, `project`, `team`, or `user`. Default to the narrowest scope
   the fragment was actually learned at. A working-style preference noticed while
   debugging this project is still `user` scope if it's about the person, not the
   project — scope is about *who it's about / who should see it*, not where it happened.
+- **Confidence** — `observed`, `confirmed`, or `established` (see
+  [docs/ARCHITECTURE.md § Confidence & mutability](../../../docs/ARCHITECTURE.md#confidence--mutability)).
+  Default to `observed` for a first-time, inferred, or one-off fragment. Use `confirmed`
+  when the user stated it directly or it corroborates something already on record.
+  `rule` and `intent` records almost always start at `confirmed` or higher — they're
+  deliberately stated, not merely noticed. Only mark something `established` when the
+  user explicitly says to treat it as settled, or it's been independently reinforced
+  enough times that calling it out as durable in your closing summary (see Output below)
+  is clearly justified.
 
 Skip anything covered under "What NOT to remember" in ARCHITECTURE.md — code structure,
 git-derivable history, bug-fix mechanics, anything already in `CLAUDE.md`, in-progress
@@ -65,9 +74,17 @@ sensible permanent home for genuinely personal memory.
 
 ### 4. Flag conflicts
 
-If a fragment contradicts an existing record rather than just updating it, don't
-silently overwrite — surface the conflict to the user and let them resolve it. A wrong
-memory that's confidently stated is worse than a gap.
+If a fragment contradicts an existing record rather than just updating it, check that
+record's confidence tier before touching it:
+
+- `observed` — update it in place, no confirmation needed.
+- `confirmed` — update it, but say so plainly in your closing summary (see Output below)
+  rather than changing it silently.
+- `established` — do not change or remove it. Surface the conflict to the user and let
+  them decide; at most, add a note referencing the new, contradicting fragment without
+  altering the established record itself.
+
+A wrong memory that's confidently stated is worse than a gap.
 
 ### 5. Promote (human-gated)
 

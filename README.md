@@ -58,12 +58,13 @@ AGENTS.md               pointer to CLAUDE.md for non-Claude coding assistants
 
 ## Status
 
-Early / spec stage. What exists today: the scope and memory-record model, and a
-`/dream` skill you can run manually inside Claude Code or Claude.ai to consolidate a
-session into memory files in this repo. What's roadmap: an MCP server exposing
-`memory.search` / `memory.write` / `memory.consolidate` as tools so any MCP client can
-read and write the same store, and adapters for other assistants' instruction-file
-conventions. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#roadmap) for details.
+Early / spec stage. What exists today: the scope/type/confidence model for a memory
+record, and a `/dream` skill you can run manually inside Claude Code or Claude.ai to
+consolidate a session into memory files in this repo. What's roadmap: a small,
+self-hosted **memory hub** — a SQLite-backed service exposed over MCP — that aggregates
+project/team memory across every repo you work in, so cross-project questions don't
+require having every repo cloned side by side. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#roadmap) for the full list.
 
 ## Getting started (Claude Code / Claude.ai today)
 

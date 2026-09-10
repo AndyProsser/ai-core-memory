@@ -14,9 +14,10 @@ are load-bearing for everything else in the repo.
 - **Line endings: LF everywhere, no exceptions.** Enforced via `.gitattributes` and
   `.editorconfig`. Don't introduce CRLF files or fight the normalization.
 - **Memory records are Markdown + YAML frontmatter**, per the templates in
-  [`memory/schema/`](memory/schema/). Every record declares both a `type`
-  (user/feedback/project/reference) and a `scope` (session/project/team/user) — see
-  ARCHITECTURE.md for what each means and how they interact.
+  [`memory/schema/`](memory/schema/). Every record declares a `type`
+  (user/feedback/project/reference/intent/rule), a `scope` (session/project/team/user),
+  and a `confidence` tier (observed/confirmed/established) — see ARCHITECTURE.md for
+  what each means and how they interact.
 - **Don't write real personal memory data into this repo.** `memory/data/user/` and
   `memory/data/session/` are gitignored on purpose — user-scope memory is machine-local,
   not project-shared. `memory/data/project/` and `memory/data/team/` are meant to be
@@ -36,7 +37,8 @@ are load-bearing for everything else in the repo.
 
 ## Scope of changes
 
-Don't build the MCP server or other roadmap items (see ARCHITECTURE.md → Roadmap) unless
-explicitly asked — they're listed as direction, not as pending work to pick up
-proactively. Prefer extending the plain-file format and the `dream` skill, since those
-are what's actually in use today.
+Don't build the memory hub service or other roadmap items (see ARCHITECTURE.md →
+Roadmap) unless explicitly asked — the hub's *design* is decided, but its stack
+(language, framework, auth model) isn't, so starting an implementation would mean
+guessing at decisions that belong to the user. Prefer extending the plain-file format,
+the schema templates, and the `dream` skill, since those are what's actually in use today.

@@ -4,6 +4,7 @@ description: "{{one-line summary of the fact/decision — used to decide relevan
 metadata:
   type: project
   scope: "{{project|team}}"
+  confidence: "{{observed|confirmed|established}}"
   project_id: "{{repo or project name}}"
   created: "{{YYYY-MM-DD}}"
   source: dream-cycle

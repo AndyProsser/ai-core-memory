@@ -4,6 +4,7 @@ description: "{{one-line summary of what lives at this pointer and why it matter
 metadata:
   type: reference
   scope: "{{project|team|user}}"
+  confidence: "{{observed|confirmed|established}}" # usually confirmed once the pointer's been checked
   project_id: "{{repo or project name, if scope: project}}"
   created: "{{YYYY-MM-DD}}"
   source: dream-cycle

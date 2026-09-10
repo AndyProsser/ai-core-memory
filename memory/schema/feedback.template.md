@@ -4,6 +4,7 @@ description: "{{one-line summary of the guidance — used to decide relevance}}"
 metadata:
   type: feedback
   scope: "{{project|team|user}}"
+  confidence: "{{observed|confirmed|established}}"
   project_id: "{{repo or project name, if scope: project}}"
   created: "{{YYYY-MM-DD}}"
   source: dream-cycle

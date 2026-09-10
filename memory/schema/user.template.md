@@ -4,6 +4,7 @@ description: "{{one-line summary of this fact about the person — used to decid
 metadata:
   type: user
   scope: user
+  confidence: "{{observed|confirmed|established}}"
   created: "{{YYYY-MM-DD}}"
   source: dream-cycle
 ---
