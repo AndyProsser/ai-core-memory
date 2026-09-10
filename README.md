@@ -50,6 +50,8 @@ you already knew.
 ```text
 .claude/skills/dream/   the dream-cycle consolidation skill (Claude Skills format)
 docs/ARCHITECTURE.md    full design: scopes, memory record schema, the dream pipeline
+docs/DEPLOYMENT.md      running the memory hub: Docker/Podman/k3s/k8s
+docs/DISTRIBUTION.md    getting skills + the hub into Claude Code and Claude.ai
 memory/schema/          canonical templates for each memory type
 memory/README.md        where runtime memory data lives and what is/isn't committed
 CLAUDE.md               AI working instructions for this repo

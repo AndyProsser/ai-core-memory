@@ -303,7 +303,10 @@ Ordered by how much is built vs. planned:
    etc.) — both just point back at this document and `memory/schema/`.
 4. **Memory hub + MCP (roadmap).** The self-hosted hub described above, reachable via
    MCP tools — the way a non-filesystem AI client, or a client working in a project that
-   hasn't cloned every other project, gets access to memory beyond its own repo.
+   hasn't cloned every other project, gets access to memory beyond its own repo. See
+   [docs/DEPLOYMENT.md](DEPLOYMENT.md) for how it's meant to run (Docker/Podman/k3s), and
+   [docs/DISTRIBUTION.md](DISTRIBUTION.md) for how an AI client actually connects to it —
+   a Claude Code plugin, a manual `claude mcp add`, or a Claude.ai custom connector.
 5. **Personal cross-machine sync (roadmap, optional).** If a hub isn't running, plain
    `user` scope can still sync across a person's own machines the simple way — a
    personal git repo they own. The hub is for cross-project aggregation; it isn't
@@ -318,6 +321,10 @@ Ordered by how much is built vs. planned:
       with server-side confidence-tier enforcement
 - [ ] Import/export endpoints for backup/restore (markdown + frontmatter), gated to
       project/team owners and admins, still routed through confidence-tier conflict checks
+- [ ] Container image + docker-compose per [docs/DEPLOYMENT.md](DEPLOYMENT.md); k3s/k8s
+      manifests are documented but genuinely optional
+- [ ] Claude Code plugin (`.claude-plugin/`) per [docs/DISTRIBUTION.md](DISTRIBUTION.md)
+      — blocked on confirming the current plugin skills-path convention first
 - [ ] `hub-sync` skill or process to push repo records to the hub and pull cross-project
       context back into a session
 - [ ] Confidence-tier enforcement wired into the `dream` skill's conflict handling

@@ -28,12 +28,14 @@ are load-bearing for everything else in the repo.
 
 ## Where things go
 
-| Adding...                                  | Goes in                                                                        |
-| ------------------------------------------ | ------------------------------------------------------------------------------ |
-| A new Claude Skill                         | `.claude/skills/<name>/SKILL.md`                                               |
-| A new memory type or scope                 | `docs/ARCHITECTURE.md` first, then a template in `memory/schema/`              |
-| A design/process change to the dream cycle | `docs/ARCHITECTURE.md`                                                         |
-| Editor/tooling config                      | `.vscode/`, `.editorconfig`, `.gitattributes` — keep these boring and standard |
+| Adding...                                            | Goes in                                                                        |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------ |
+| A new Claude Skill                                   | `.claude/skills/<name>/SKILL.md`                                               |
+| A new memory type or scope                           | `docs/ARCHITECTURE.md` first, then a template in `memory/schema/`              |
+| A design/process change to the dream cycle           | `docs/ARCHITECTURE.md`                                                         |
+| Anything about running the memory hub                | `docs/DEPLOYMENT.md` (containers, k3s/k8s, backups)                            |
+| Anything about installing skills/MCP into an AI tool | `docs/DISTRIBUTION.md` (plugins, `.mcp.json`, Claude.ai connectors)            |
+| Editor/tooling config                                | `.vscode/`, `.editorconfig`, `.gitattributes` — keep these boring and standard |
 
 ## Scope of changes
 
