@@ -5,6 +5,11 @@ gets run once it exists. This is a reference design, not backed by application c
 — the Dockerfile/compose/Kubernetes snippets below describe the intended shape so
 deployment doesn't have to be improvised after the fact.
 
+**Self-host first.** The baseline is one container (or one `pip install` + `uvicorn`),
+one SQLite file, one volume, no external services — not even a database server, mail
+server, or identity provider is required (local accounts work out of the box; OIDC is
+optional but supported from the first release). Everything past that is optional.
+
 ## Container image
 
 - Single Dockerfile, multi-stage: a builder stage installs Python dependencies, the
@@ -55,10 +60,40 @@ services:
       MEMORY_HUB_DB_PATH: /data/hub.sqlite3
       MEMORY_HUB_SECRET_KEY: ${MEMORY_HUB_SECRET_KEY}
       MEMORY_HUB_ADMIN_EMAIL: ${MEMORY_HUB_ADMIN_EMAIL}
+      # Optional SSO — omit for local accounts only. Secrets come from env/.env, never the image.
+      MEMORY_HUB_OIDC_ISSUER: ${MEMORY_HUB_OIDC_ISSUER:-}
+      MEMORY_HUB_OIDC_CLIENT_ID: ${MEMORY_HUB_OIDC_CLIENT_ID:-}
+      MEMORY_HUB_OIDC_CLIENT_SECRET: ${MEMORY_HUB_OIDC_CLIENT_SECRET:-}
+      MEMORY_HUB_PUBLIC_URL: ${MEMORY_HUB_PUBLIC_URL:-http://localhost:8000} # used for OIDC redirect URI
+      # Plugin secrets are referenced by name in the UI and resolved from the environment, e.g.:
+      # SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
 
 volumes:
   hub-data:
 ```
+
+### First run and the `acm` CLI
+
+The image also contains the `acm` CLI, which works on the same volume with no network
+and no AI (see [ARCHITECTURE.md § Import / export](ARCHITECTURE.md#import--export--offline-human-operated)):
+
+```bash
+docker compose run --rm memory-hub acm setup-code      # one-time code to claim first-run setup in the browser
+docker compose run --rm memory-hub acm user create --admin you@example.com   # or create the admin headlessly
+docker compose run --rm memory-hub acm export --out /data/export             # offline export, hub need not be running
+docker compose run --rm memory-hub acm doctor                                # integrity + config check
+```
+
+There is no default password and no "first visitor becomes admin" window; see
+[SECURITY.md § CLI access](SECURITY.md#cli-access-and-the-local-trust-boundary).
+
+### Optional plugins
+
+Plugins ([PLUGINS.md](PLUGINS.md)) are extra Python packages. To use one, extend the
+image (`FROM ai-core-memory/hub` + `pip install acm-plugin-…`) or set
+`MEMORY_HUB_EXTRA_PIP` for a startup install on a home server, then configure it in
+Settings → Plugins. Obsidian's connector needs the vault directory mounted into the
+container (read-only unless you want digest export).
 
 ## Podman
 
@@ -128,12 +163,20 @@ sourced differently per platform.
 
 ## Backups
 
-The import/export endpoints (see
-[ARCHITECTURE.md § Import / export](ARCHITECTURE.md#import--export--backup-only-never-the-routine-write-path))
-exist for exactly this: schedule a job — a host cron entry alongside docker-compose, a
-Kubernetes `CronJob` alongside k3s/k8s — that calls `GET /memories/export` and writes the
-resulting markdown archive somewhere durable. That's the whole point of "store memories
-in user-defined storage as markdown for backup" from the original design conversation.
+Export (see
+[ARCHITECTURE.md § Import / export](ARCHITECTURE.md#import--export--offline-human-operated))
+exists for exactly this, and works without the hub running. Two options:
+
+- **Offline, simplest:** a host cron entry (or Kubernetes `CronJob` mounting the same
+  volume) running `acm export --with-history --out <durable location>`. No token, no
+  network, no AI.
+- **Over the API:** a job that calls `GET /memories/export` with a read-only token scoped
+  to the projects to back up.
+
+Either produces the same markdown + `manifest.json` layout, which `acm import --dry-run`
+can restore into a fresh instance. Back up the SQLite volume too if you want
+tokens, users, and plugin config (exports contain memory, not credentials) — use
+`sqlite3 hub.sqlite3 ".backup …"` or snapshot the volume rather than copying a live file.
 This is ordinary infrastructure, not a feature the hub itself needs to implement.
 
 ## Status

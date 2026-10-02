@@ -36,6 +36,12 @@ breach. Every point below exists for that one reason.
   from access and error logs; rejected outright over plaintext HTTP except from
   localhost or an RFC1918 address (self-hosted instances still need to work on a LAN
   without forcing a TLS setup just to try it out).
+- **Owned by a user, minted by a person.** A token acts as the user who created it,
+  never with more access than that user has, and can only be created from a logged-in web
+  session or the host CLI (never by another token). Each token is created with a label,
+  project scope, access level, and expiry — and the UI hands back a ready-to-paste
+  `claude mcp add` line and `.mcp.json` snippet at that moment, since it's the only time
+  the raw value exists.
 - **Traceable per token, not just per user.** `memory_revisions` records
   `changed_by_token_id` alongside `changed_by_user_id`. If a specific token turns out to
   be compromised, revoking it is enough — you don't have to distrust everything that
@@ -129,3 +135,107 @@ auto-create a `member` account on first successful login, or require an admin to
 pre-invited that email — the right default depends on whether the instance is `solo`
 (auto-create is fine) or `multi_team` inside an org that wants to control who gets an
 account (pre-invite only).
+
+### OIDC details
+
+- **Flow:** authorization code with PKCE, plus `state` and `nonce` validated on return;
+  ID token signature, issuer, audience, and expiry verified against the provider's JWKS
+  (cached, refreshed on key rotation). Only `https` issuers are accepted outside
+  localhost/RFC1918.
+- **Identity key is `(issuer, sub)`**, not email — an email change or reuse at the
+  provider can't silently hand one person another's account. Email is used to match a
+  pre-invited account on first login, and only when the provider reports
+  `email_verified`.
+- **Local admin stays as the recovery path.** The bootstrap admin keeps a local password
+  even when OIDC is enabled, and `acm user` can create or reset a local admin from the
+  host (see CLI access below), so a broken or misconfigured IdP never locks the operator
+  out of their own data. An instance can disable local login for non-admin users.
+- **Optional later:** map OIDC group claims to team membership/roles. Not in the first
+  release — membership is managed in the hub.
+
+## Web sessions
+
+The web UI authenticates with a server-side session, not an API token:
+
+- Session cookie: `HttpOnly`, `Secure` (except on localhost/RFC1918 plain HTTP),
+  `SameSite=Lax`, rotated on login, idle and absolute timeouts configurable.
+- **CSRF protection** on every state-changing request (synchronizer token via HTMX
+  headers); the UI never accepts API tokens, and the API never accepts session cookies
+  for MCP/REST token routes — the two credential types can't be confused.
+- Strict `Content-Security-Policy` (no inline scripts except a single nonce'd theme
+  bootstrap), no third-party origins — the UI loads nothing from a CDN.
+- Login throttling per account and per IP; password-change and token-mint actions
+  re-prompt for the password (local accounts) or recent OIDC re-authentication.
+- Record bodies are untrusted markdown: rendered through a sanitizing renderer (no raw
+  HTML, no script, links `rel="noopener noreferrer"`) so a malicious memory can't attack
+  the person reviewing it.
+
+## What AI clients cannot do
+
+Tokens authenticate **AI clients and integrations**, and the capability boundary is part
+of the security model, not just convenience:
+
+- A token can read, write, and _propose_ within its scope. It **cannot** approve or
+  reject a proposal, mint or revoke tokens, change instance settings, manage users or
+  teams, install/configure plugins, or run import/export. Those are human-session-only
+  operations. A compromised token can therefore at worst add `observed` records and
+  proposals within its scope — and every one of them is attributed to the token and
+  reviewable.
+- Writes from a token are subject to the same confidence-tier and core-budget
+  enforcement as everything else; there is no "trusted" token tier that skips them.
+- Prompt-injection hygiene: record bodies and inbox items are _data_. The hub marks
+  content from `plugin:*` and unattributed sources (`source_trust: external`) so a client
+  or the UI can treat it with suspicion — a note scraped from the web shouldn't be able
+  to promote itself to a `rule` without a person approving it, which the proposal gate
+  already guarantees.
+
+## CLI access and the local trust boundary
+
+The `acm` CLI (see [ARCHITECTURE.md § Import / export](ARCHITECTURE.md#import--export--offline-human-operated))
+operates directly on the SQLite file or a plain-file memory directory. That makes it
+exactly as trusted as **filesystem access to the host**, which — as noted under Roles —
+is already the real boundary on a self-hosted instance. The CLI therefore:
+
+- needs no token, but refuses to run unless it can read/write the database file (OS
+  permissions are the gate; the file and data directory are created `0600`/`0700`);
+- records `change_source = 'cli'` and the OS username on every revision it writes;
+- applies the same confidence-tier and `--confirm-established` rules as the UI;
+- is how the first admin and any recovery account are created, so there is no default
+  password and no "first visitor to the URL becomes admin" window — the first-run UI
+  setup is only available while no admin exists **and** requires a one-time setup code
+  printed in the server log / returned by `acm setup-code`.
+
+## Plugins and egress
+
+Plugins (see [PLUGINS.md](PLUGINS.md)) are the one place memory-adjacent data can leave
+the hub, so they get explicit rules. Cross-talk is a one-way-door risk: a record posted
+to the wrong Slack channel can't be un-posted.
+
+- **Operator-installed, in-process, trusted.** A plugin is code the operator chose to
+  install; the hub doesn't sandbox it. The UI configures plugins but can never upload or
+  run code. Treat installing one like installing any dependency: pin and review it.
+- **Deny by default.** A new plugin instance has an empty scope allowlist. The operator
+  must explicitly allow each scope (and project) it may see.
+- **`user` scope never egresses by default**, and a per-instance setting to include it
+  requires an admin-confirmed acknowledgement; even then it can only ever include the
+  _operator's own_ user-scope records, never another user's.
+- **Metadata-only egress by default.** Sinks receive ids, names, types, and a link back
+  to the hub — not record bodies. `egress: full` is a per-instance opt-in, shown in the
+  Plugins screen so nobody forgets it's on.
+- **Secrets by reference.** Plugin config stores environment variable _names_; values are
+  resolved at call time, held only in memory, and redacted from logs. They are never
+  written to records, events, revisions, exports, or the database.
+- **No ambient authority.** A plugin gets a narrow context object — no DB handle, no API
+  token, no ability to call other plugins. Inbound (source) plugins can only add inbox
+  items; they cannot write records or approve anything.
+- **Inbound content is untrusted.** Inbox items from plugins are marked external, never
+  auto-promoted, and subject to the normal dream-cycle classification and human-gated
+  promotion — a hostile note in a synced Obsidian vault or Memos instance cannot become
+  a `rule` or a core record on its own.
+- **Bounded and isolated.** Per-call timeouts, bounded retries with backoff, per-instance
+  rate limits, and failures that can't block writes or other plugins. Outbound HTTP
+  from plugins goes through one egress helper that refuses non-HTTPS targets (except
+  localhost/RFC1918) and can be restricted by an operator-configured host allowlist.
+- **Auditable.** Every delivery and every inbound pull is recorded (`plugin_deliveries`,
+  `change_source = 'plugin'` on any resulting revision) and visible in the Plugins screen.
+

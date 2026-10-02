@@ -16,8 +16,13 @@ are load-bearing for everything else in the repo.
 - **Memory records are Markdown + YAML frontmatter**, per the templates in
   [`memory/schema/`](memory/schema/). Every record declares a `type`
   (user/feedback/project/reference/intent/rule), a `scope` (session/project/team/user),
-  and a `confidence` tier (observed/confirmed/established) — see ARCHITECTURE.md for
-  what each means and how they interact.
+  a `confidence` tier (observed/confirmed/established), a loading `tier`
+  (core/associated), and a lifecycle `status` (active/superseded/stale/archived) — see
+  ARCHITECTURE.md for what each means and how they interact.
+- **Design commitments that apply to everything built here:** self-hosting comes first
+  (no required cloud service); OIDC SSO and per-user API tokens ship from the first
+  release; review/export/import must work offline and without an AI (`acm` CLI + web UI);
+  the web UI must support light and dark themes. Don't build around these.
 - **Don't write real personal memory data into this repo.** `memory/data/user/` and
   `memory/data/session/` are gitignored on purpose — user-scope memory is machine-local,
   not project-shared. `memory/data/project/` and `memory/data/team/` are meant to be
@@ -36,6 +41,8 @@ are load-bearing for everything else in the repo.
 | Anything about running the memory hub                | `docs/DEPLOYMENT.md` (containers, k3s/k8s, backups)                            |
 | Anything about installing skills/MCP into an AI tool | `docs/DISTRIBUTION.md` (plugins, `.mcp.json`, Claude.ai connectors)            |
 | Anything about tokens, roles, visibility, or auth    | `docs/SECURITY.md`                                                             |
+| Anything about the web UI, screens, or theming       | `docs/UI.md`                                                                   |
+| Anything about plugins (Obsidian, Memos, Slack, …)   | `docs/PLUGINS.md` (egress/trust rules go in `docs/SECURITY.md`)                |
 | Editor/tooling config                                | `.vscode/`, `.editorconfig`, `.gitattributes` — keep these boring and standard |
 
 ## Scope of changes

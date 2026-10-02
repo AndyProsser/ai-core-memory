@@ -23,6 +23,10 @@ This directory has two parts:
   genuine user-scope memory, point it outside the repo entirely (e.g. `~/.ai-memory/`)
   rather than relying on the gitignored in-repo path.
 
+An optional `inbox/` directory in each scope holds raw captured snippets
+(`schema/inbox.template.md`) waiting for the next dream cycle to classify them — input,
+not memory.
+
 Each record is Markdown with YAML frontmatter — see any file under `schema/` for the
 exact shape. A short `MEMORY.md` index at the root of each scope directory (mirroring
 the pattern) keeps a one-line pointer per record so a session can see what exists
