@@ -155,3 +155,4 @@ ol.timeline li { position: relative; padding: .35rem 0 .35rem .8rem; }
 ol.timeline li::before { content: ""; position: absolute; left: -1.35rem; top: .85rem; width: .6rem; height: .6rem; border-radius: 50%; background: var(--surface); border: 2px solid var(--border-strong); }
 ol.timeline li[aria-current="true"]::before { background: var(--accent); border-color: var(--accent); }
 ol.timeline .when { color: var(--text-muted); font-size: .85rem; margin-right: .5rem; font-variant-numeric: tabular-nums; }
+.wrap { overflow-wrap: anywhere; word-break: break-word; }

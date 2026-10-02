@@ -26,6 +26,14 @@ class InstanceSettings(SQLModel, table=True):
     local_login_enabled: bool = True
     oidc_provisioning: str = "auto"  # auto | invite
     setup_code_hash: str | None = None
+    # Lifecycle / consolidation (docs/ARCHITECTURE.md § How memory changes over time)
+    stale_after_days_observed: int = Field(default=90, sa_column_kwargs={"server_default": "90"})
+    stale_after_days_confirmed: int = Field(default=365, sa_column_kwargs={"server_default": "365"})
+    review_established_days: int = Field(default=365, sa_column_kwargs={"server_default": "365"})
+    auto_apply_proposals: bool = Field(
+        default=False, sa_column_kwargs={"server_default": "0"}
+    )  # observed-only, low-risk kinds
+    last_consolidation_at: NaiveDatetime | None = None
 
 
 class User(SQLModel, table=True):
@@ -163,6 +171,103 @@ class MemoryRevision(SQLModel, table=True):
     change_source: str = "mcp-write"  # dream-cycle | mcp-write | import | ui | cli | plugin | mechanical
     flagged: bool = False  # called out for human attention (confirmed-record change, import conflict, ...)
     applied: bool = True  # False = a pending conflict awaiting a human decision
+
+
+class Reinforcement(SQLModel, table=True):
+    """One row per (record, independent source): a single session can only reinforce a record once."""
+
+    __tablename__ = "reinforcements"
+    record_id: str = Field(foreign_key="memory_records.id", primary_key=True)
+    source_ref: str = Field(primary_key=True)
+    reinforced_at: NaiveDatetime = Field(default_factory=utcnow)
+    by_token_id: str | None = Field(default=None, foreign_key="api_tokens.id")
+    by_user_id: str | None = Field(default=None, foreign_key="users.id")
+
+
+class Proposal(SQLModel, table=True):
+    """A suggested change awaiting a human decision (the consolidation queue)."""
+
+    __tablename__ = "proposals"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    kind: str  # merge | supersede | promote_scope | promote_core | demote_core | mark_stale | archive | review_established | conflict
+    status: str = "pending"  # pending | applied | rejected | expired
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    target_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    rationale: str = ""
+    generated_by: str = "mechanical"  # mechanical | dream-skill | llm-worker
+    generated_by_token_id: str | None = Field(default=None, foreign_key="api_tokens.id")
+    dedupe_key: str = Field(index=True)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    decided_by_user_id: str | None = Field(default=None, foreign_key="users.id")
+    decided_by_label: str | None = None  # "auto" for auto-applied, OS user for CLI
+    decided_at: NaiveDatetime | None = None
+    decision_note: str | None = None
+
+
+class PluginInstance(SQLModel, table=True):
+    """One configured use of a plugin (e.g. "Slack #memory" using the apprise plugin). Holds no secret values."""
+
+    __tablename__ = "plugin_instances"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    plugin_key: str = Field(index=True)
+    name: str
+    owner_user_id: str = Field(
+        foreign_key="users.id"
+    )  # whose memory a source captures into / whose user-scope a sink may see
+    enabled: bool = False
+    config: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))  # non-secret settings
+    secret_refs: dict = Field(
+        default_factory=dict, sa_column=Column(JSON, nullable=False)
+    )  # {secret name: ENV VAR NAME}, never values
+    scopes: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )  # deny by default: empty sees nothing
+    projects: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )  # project slugs; empty = all within allowed scopes
+    events: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )  # subscribed event types
+    egress: str = "metadata"  # metadata | full
+    user_scope_ack: bool = False  # admin acknowledged that this instance may see the owner's personal memory
+    pull_interval_minutes: int = 60  # source plugins
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    last_run_at: NaiveDatetime | None = None
+    last_status: str | None = None  # ok | error
+    last_error: str | None = None
+    consecutive_failures: int = 0
+    last_digest_at: NaiveDatetime | None = None
+
+
+class Event(SQLModel, table=True):
+    """The outbox: written in the same transaction as the change that caused it. Payloads are minimal
+    (ids, names, links) — bodies are never copied here."""
+
+    __tablename__ = "events"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    type: str = Field(index=True)
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    scope: str | None = None  # project | team | user | None (scope-less, e.g. plugin.failed)
+    project_slug: str | None = None
+    team_slug: str | None = None
+    owner_user_id: str | None = None  # whose user-scope memory it concerns / who it's for
+    instance_id: str | None = None  # set = deliver only to this instance (digests, tests)
+    origin_instance_id: str | None = (
+        None  # the instance whose own activity caused it: never echoed back to it
+    )
+    created_at: NaiveDatetime = Field(default_factory=utcnow, index=True)
+    dispatched_at: NaiveDatetime | None = None
+
+
+class PluginDelivery(SQLModel, table=True):
+    __tablename__ = "plugin_deliveries"
+    event_id: str = Field(foreign_key="events.id", primary_key=True)
+    instance_id: str = Field(foreign_key="plugin_instances.id", primary_key=True)
+    status: str = "pending"  # pending | delivered | dead
+    attempts: int = 0
+    next_attempt_at: NaiveDatetime = Field(default_factory=utcnow, index=True)
+    last_error: str | None = None
+    delivered_at: NaiveDatetime | None = None
 
 
 class InboxItem(SQLModel, table=True):

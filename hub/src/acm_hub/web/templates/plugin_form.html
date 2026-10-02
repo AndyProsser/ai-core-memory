@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% set labels = {
+  'record.created': 'A memory is added', 'record.updated': 'A memory changes', 'record.superseded': 'A memory is replaced',
+  'proposal.pending': 'Something needs my review', 'conflict.flagged': 'A conflict needs my decision', 'core.budget_exceeded': 'Core memory is over budget',
+  'inbox.new': 'Something lands in my inbox', 'digest.weekly': 'Weekly digest', 'plugin.failed': 'A plugin keeps failing' } %}
+{% block title %}{{ inst.name }}{% endblock %}
+{% block content %}
+<header class="page"><div><h1>{{ 'Add: ' ~ plugin.info.name if mode == 'new' else inst.name }}</h1>
+  <p class="muted">{{ plugin.info.description }} <a href="/plugins">← All plugins</a></p></div></header>
+{% for e in errors %}<div class="error" role="alert">{{ e }}</div>{% endfor %}
+
+<form method="post" action="{{ '/plugins' if mode == 'new' else '/plugins/' ~ inst.id }}" class="card">
+  {{ csrf() }}{% if mode == 'new' %}<input type="hidden" name="plugin" value="{{ plugin.info.key }}">{% endif %}
+  <div class="row">
+    <div><label for="name">Name</label><input id="name" type="text" name="name" value="{{ inst.name }}" maxlength="80" required></div>
+    <div class="shrink"><label class="inline spaced"><input type="checkbox" name="enabled" {% if inst.enabled %}checked{% endif %}> Turned on</label></div>
+  </div>
+
+  {% if fields %}<h3>Settings</h3>
+  <div class="row">{% for f in fields %}
+    <div>
+      <label for="cfg_{{ f.name }}">{{ f.label }}{% if not f.required %} <span class="muted">(optional)</span>{% endif %}</label>
+      {% if f.kind == 'bool' %}<label class="inline"><input type="checkbox" id="cfg_{{ f.name }}" name="cfg_{{ f.name }}" {% if f.value %}checked{% endif %}> Yes</label>
+      {% elif f.kind == 'select' %}<select id="cfg_{{ f.name }}" name="cfg_{{ f.name }}">{% for o in f.options %}<option value="{{ o }}" {% if o == f.value %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
+      {% elif f.kind == 'number' %}<input id="cfg_{{ f.name }}" type="number" name="cfg_{{ f.name }}" value="{{ f.value }}">
+      {% else %}<input id="cfg_{{ f.name }}" type="text" name="cfg_{{ f.name }}" value="{{ f.value }}">{% endif %}
+      {% if f.help %}<p class="hint">{{ f.help }}</p>{% endif %}
+    </div>{% endfor %}
+  </div>{% endif %}
+
+  {% if secrets %}<h3>Secrets</h3>
+  <p class="hint">Enter the <strong>name of an environment variable</strong> on the hub's host (for example <code>SLACK_WEBHOOK_URL</code>), never the secret itself. The value is read when it's needed and never stored.</p>
+  {% for s in secrets %}
+    <label for="secret_{{ s.name }}">{{ s.name|replace('_', ' ')|capitalize|replace('Url', 'URL') }}</label>
+    <input id="secret_{{ s.name }}" type="text" name="secret_{{ s.name }}" value="{{ s.env }}" placeholder="ENV_VAR_NAME" autocomplete="off" spellcheck="false" pattern="[A-Z_][A-Z0-9_]*">
+    <p class="hint">{{ s.help }} {% if s.env %}{% if s.is_set %}<span class="badge established">set in the hub's environment</span>{% else %}<span class="badge stale">not set in the hub's environment</span>{% endif %}{% endif %}</p>
+  {% endfor %}{% endif %}
+
+  {% if is_sink %}<h3>What it may see</h3>
+  <p class="hint">Nothing is shared unless you tick it. Notifications carry names, types and a link back here — not the text of a memory — unless you choose “full text”.</p>
+  <div><span class="small"><strong>Scopes</strong></span>
+    {% for s, l in [('project', 'Project memory'), ('team', 'Team memory'), ('user', 'My personal memory')] %}
+    <label class="inline spaced"><input type="checkbox" name="scopes" value="{{ s }}" {% if s in inst.scopes %}checked{% endif %}> {{ l }}</label>&nbsp;{% endfor %}
+  </div>
+  <label class="inline spaced"><input type="checkbox" name="user_scope_ack" {% if inst.user_scope_ack %}checked{% endif %}> I understand this destination will receive notices about my personal memory</label>
+  <div class="row">
+    <div><label for="projects">Only these projects <span class="muted">(optional)</span></label><input id="projects" type="text" name="projects" value="{{ inst.projects|join(', ') }}" placeholder="{{ projects|join(', ') if projects else 'project-slug' }}">
+      <p class="hint">Empty means every project within the allowed scopes that you can read.</p></div>
+    <div><label for="egress">Detail</label><select id="egress" name="egress"><option value="metadata" {% if inst.egress == 'metadata' %}selected{% endif %}>Titles and links only (recommended)</option><option value="full" {% if inst.egress == 'full' %}selected{% endif %}>Full text of memories</option></select></div>
+  </div>
+  <span class="small"><strong>Notify me when…</strong></span>
+  <div>{% for e in all_events %}<label class="inline spaced"><input type="checkbox" name="events" value="{{ e }}" {% if e in inst.events %}checked{% endif %}> {{ labels[e] }}</label><br>{% endfor %}</div>
+  {% endif %}
+
+  {% if is_source %}<h3>Schedule</h3>
+  <div class="row"><div><label for="pull_interval_minutes">Check every (minutes)</label><input id="pull_interval_minutes" type="number" name="pull_interval_minutes" value="{{ inst.pull_interval_minutes }}" min="5" max="10080"></div></div>
+  <p class="hint">Captured notes go to your inbox for review. They're marked as coming from outside, and are never turned into memory automatically.</p>
+  {% endif %}
+
+  <div class="actions"><button class="primary" type="submit">{{ 'Add plugin' if mode == 'new' else 'Save' }}</button><a class="btn" href="/plugins">Cancel</a></div>
+</form>
+
+{% if mode == 'edit' %}
+<h2>Actions</h2>
+<div class="actions">
+  {% if is_sink %}<form method="post" action="/plugins/{{ inst.id }}/test">{{ csrf() }}<button type="submit">Send a test notification</button></form>{% endif %}
+  {% if is_source %}<form method="post" action="/plugins/{{ inst.id }}/pull">{{ csrf() }}<button type="submit">Check now</button></form>{% endif %}
+  <form method="post" action="/plugins/{{ inst.id }}/delete" >{{ csrf() }}<button class="danger" type="submit">Remove</button></form>
+</div>
+<h2>Status</h2>
+<p>{% if inst.last_status == 'error' %}<span class="badge stale">failing</span> {{ inst.last_error }} <span class="muted">({{ inst.consecutive_failures }} in a row)</span>
+   {% elif inst.last_status == 'ok' %}<span class="badge established">ok</span> last run {{ inst.last_run_at|datetime }} UTC{% else %}Hasn't run yet.{% endif %}</p>
+{% if deliveries %}
+<table><thead><tr><th>When</th><th>Event</th><th>Result</th><th>Tries</th></tr></thead><tbody>
+  {% for x in deliveries %}<tr><td class="small">{{ x.event.created_at|datetime if x.event else '—' }}</td><td class="small">{{ x.event.type if x.event else '(purged)' }}</td>
+    <td><span class="badge {{ 'established' if x.d.status == 'delivered' else ('stale' if x.d.status == 'dead' else '') }}">{{ x.d.status }}</span>{% if x.d.last_error %}<div class="small">{{ x.d.last_error }}</div>{% endif %}</td><td>{{ x.d.attempts }}</td></tr>{% endfor %}
+</tbody></table>{% endif %}
+{% endif %}
+{% endblock %}

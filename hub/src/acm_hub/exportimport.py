@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 import yaml
 from sqlmodel import Session, col, select
 
-from . import __version__, proposals
+from . import __version__, events, proposals
 from .access import AccessError, NotFound, Principal, can_read, visible_clause
 from .ids import is_id
 from .models import (
@@ -468,16 +468,17 @@ def _import_inbox(session: Session, p: Principal, path: str, raw: bytes) -> int:
         ).first()
     ):
         return 0
-    session.add(
-        InboxItem(
-            owner_user_id=p.user_id,
-            source=source,
-            scope=str(fm.get("scope") or "user"),
-            title=str(fm["title"])[:200],
-            body=m.group(2).strip("\n")[:20000],
-            external_ref=str(ref) if ref else None,
-        )
+    item = InboxItem(
+        owner_user_id=p.user_id,
+        source=source,
+        scope=str(fm.get("scope") or "user"),
+        title=str(fm["title"])[:200],
+        body=m.group(2).strip("\n")[:20000],
+        external_ref=str(ref) if ref else None,
     )
+    session.add(item)
+    session.flush()
+    events.emit_inbox_new(session, item)
     return 1
 
 

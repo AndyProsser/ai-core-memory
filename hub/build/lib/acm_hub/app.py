@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import anyio
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -17,9 +18,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import text
 from sqlmodel import Session, select
 
-from . import __version__
+from . import __version__, dispatcher
 from .auth import AuthError, authenticate_bearer, has_admin, issue_setup_code, purge_expired
 from .config import Settings, get_settings
+from .consolidate import maybe_run_consolidation
 from .db import make_engine, migrate
 from .mcp_server import current_principal, mcp
 from .mcp_server import state as mcp_state
@@ -89,6 +91,42 @@ class Root:
             await self.hub(scope, receive, send)
 
 
+async def _consolidation_loop(
+    engine, hours: int, *, first_delay: float = 60.0, check_every: float = 900.0
+) -> None:  # noqa: ANN001
+    """Background scheduler: checks every 15 minutes whether the nightly mechanical pass is due."""
+    await anyio.sleep(first_delay)
+    while True:
+        try:
+            report = await anyio.to_thread.run_sync(maybe_run_consolidation, engine, hours)
+            if report is not None:
+                log.info("consolidation: %s", report.as_dict())
+        except Exception:  # noqa: BLE001
+            log.exception("consolidation pass failed; will retry at the next check")
+        await anyio.sleep(check_every)
+
+
+async def _plugin_loop(engine, *, first_delay: float = 15.0, every: float = 10.0) -> None:  # noqa: ANN001
+    """Delivers queued events, pulls sources when due, sends weekly digests. Each tick is isolated from the last."""
+    await anyio.sleep(first_delay)
+    while True:
+        try:
+            out = await anyio.to_thread.run_sync(dispatcher.run_scheduled, engine)
+            s = out["dispatch"]
+            if s.delivered or s.dead or out["digests"] or any(p.captured or p.error for p in out["pulls"]):
+                log.info(
+                    "plugins: delivered=%s retried=%s dead=%s digests=%s pulls=%s",
+                    s.delivered,
+                    s.retried,
+                    s.dead,
+                    out["digests"],
+                    [(p.captured, p.error) for p in out["pulls"]],
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("plugin tick failed; will retry")
+        await anyio.sleep(every)
+
+
 def create_app(settings: Settings | None = None, *, http_client_factory=None) -> Root:  # noqa: ANN001
     settings = settings or get_settings()
     engine = make_engine(settings)
@@ -128,8 +166,13 @@ def create_app(settings: Settings | None = None, *, http_client_factory=None) ->
             log.warning(
                 "MEMORY_HUB_SECRET_KEY isn't set; using a random per-process key (set it so OIDC logins survive restarts)."
             )
-        async with mcp_asgi.router.lifespan_context(mcp_asgi):
+        async with mcp_asgi.router.lifespan_context(mcp_asgi), anyio.create_task_group() as tg:
+            if settings.plugins_enabled:
+                tg.start_soon(_plugin_loop, engine)
+            if settings.consolidate_interval_hours > 0:
+                tg.start_soon(_consolidation_loop, engine, settings.consolidate_interval_hours)
             yield
+            tg.cancel_scope.cancel()
 
     app = FastAPI(
         title="ai-core-memory hub",

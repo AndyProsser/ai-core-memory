@@ -19,7 +19,7 @@ One Python process, one SQLite file. No external services.
 | Web UI: Memory, Review (inbox + import conflicts), Focus, Data, Settings; light/dark | built |
 | `acm` CLI: setup, users, tokens, list/show/edit, export, import, consolidate, review, doctor, reindex | built |
 | Lifecycle: reinforcement, supersession + timeline, decay; proposal queue + Review screen; `acm consolidate` / `acm review`; scheduler | built (Phase 2) |
-| Plugins (Obsidian, Memos, Slack/Teams via Apprise) | Phase 3 |
+| Plugins: event outbox + dispatcher, Apprise (Slack/Teams/ntfy/email) + signed webhook sinks, Obsidian + Memos sources, Plugins screen, `acm plugins` | built (Phase 3) |
 | Teams/members UI, Claude Code plugin | Phase 4 |
 
 ## Run it
@@ -55,6 +55,7 @@ acm export --out ./backup --with-history
 acm import ./backup               # dry run; add --apply to write
 acm consolidate --dry-run         # what would decay / look duplicated / exceed the core budget
 acm review                        # the proposal queue; `acm review approve ID [--confirm-established]`
+acm plugins                       # configured plugin instances; `acm plugins disable ID` is the offline off-switch
 acm doctor
 ```
 

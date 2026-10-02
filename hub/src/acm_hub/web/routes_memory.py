@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from sqlmodel import select
 
 from ..access import NotFound, readable_project_ids, require_read, require_write
+from ..events import emit_inbox_new
 from ..focus import DEFAULT_BUDGET, build_focus
 from ..models import InboxItem, InstanceSettings, MemoryRecord, Project, Team
 from ..records import (
@@ -536,16 +537,12 @@ def inbox_add(
         if proj is None or proj.id not in readable_project_ids(ctx.db, ctx.principal):
             raise NotFound("No such project.")
         pid = proj.id
-    ctx.db.add(
-        InboxItem(
-            owner_user_id=ctx.user.id,
-            source="ui",
-            scope=scope,
-            project_id=pid,
-            title=title.strip(),
-            body=body,
-        )
+    item = InboxItem(
+        owner_user_id=ctx.user.id, source="ui", scope=scope, project_id=pid, title=title.strip(), body=body
     )
+    ctx.db.add(item)
+    ctx.db.flush()
+    emit_inbox_new(ctx.db, item)
     ctx.db.commit()
     dest = next if next.startswith("/") and not next.startswith("//") else "/review"
     return RedirectResponse(notice_url(dest, "Captured to the inbox."), status_code=303)

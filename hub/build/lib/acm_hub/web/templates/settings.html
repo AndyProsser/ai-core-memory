@@ -63,6 +63,8 @@
 </form>
 
 {% if user.is_admin %}
+<h2>Plugins</h2>
+<p class="muted">Connect Obsidian or Memos to your inbox, and send notifications to Slack, Teams, ntfy or email. <a href="/plugins">Manage plugins →</a></p>
 <h2>Instance</h2>
 <form method="post" action="/settings/instance" class="card">
   {{ csrf() }}
@@ -72,6 +74,14 @@
     <div><label for="de">Default token expiry (days)</label><input id="de" type="number" name="default_token_expiry_days" value="{{ inst.default_token_expiry_days }}" min="1"></div>
     <div><label for="me">Max token expiry (days)</label><input id="me" type="number" name="max_token_expiry_days" value="{{ inst.max_token_expiry_days }}" min="1" max="3650"></div>
   </div>
+  <h3>Memory lifecycle</h3>
+  <div class="row">
+    <div><label for="so">Observed goes stale after (days)</label><input id="so" type="number" name="stale_after_days_observed" value="{{ inst.stale_after_days_observed }}" min="7" max="3650"></div>
+    <div><label for="sc">Confirmed: propose staling after (days)</label><input id="sc" type="number" name="stale_after_days_confirmed" value="{{ inst.stale_after_days_confirmed }}" min="7" max="3650"></div>
+    <div><label for="re">Ask “still true?” on established after (days)</label><input id="re" type="number" name="review_established_days" value="{{ inst.review_established_days }}" min="7" max="3650"></div>
+  </div>
+  <p><label class="inline"><input type="checkbox" name="auto_apply_proposals" value="1" {% if inst.auto_apply_proposals %}checked{% endif %}> Apply low-risk hub proposals automatically</label></p>
+  <p class="hint">Low-risk means hub-generated, touching only unreinforced <em>observed</em> records (merging duplicates, archiving). Anything involving confirmed or established records, scope, or core always waits for you. Unused observed records are marked stale automatically (reversible, logged) either way.</p>
   <p class="hint">Single sign-on: {{ 'configured' if oidc_enabled else 'not configured (set MEMORY_HUB_OIDC_* — see docs/DEPLOYMENT.md)' }}.</p>
   <div class="actions"><button type="submit">Save instance settings</button></div>
 </form>

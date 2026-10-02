@@ -51,6 +51,7 @@ with these deliberate defaults:
   `MEMORY_HUB_TRUST_PROXY=true` (API tokens are refused over plain HTTP from non-private
   addresses — see [SECURITY.md](SECURITY.md)).
 - `MEMORY_HUB_SECRET_KEY` is **required** — compose refuses to start without it.
+- `MEMORY_HUB_PLUGINS` (default `true`) is the master switch for plugin execution.
 - `MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS` (default `24`, `0` disables) sets how often the hub runs its
   mechanical consolidation pass (decay, duplicate candidates, core budget). It's restart-safe (the last-run
   time is in the database) and you can always run it by hand: `acm consolidate [--dry-run]`.
@@ -73,11 +74,20 @@ docker compose exec memory-hub acm doctor                                # integ
 There is no default password and no "first visitor becomes admin" window; see
 [SECURITY.md § CLI access](SECURITY.md#cli-access-and-the-local-trust-boundary).
 
-### Optional plugins
+### Plugins
 
-Plugins ([PLUGINS.md](PLUGINS.md)) are extra Python packages. To use one, extend the
-image (`FROM ai-core-memory/hub` + `pip install acm-plugin-…`), then configure it in
-Settings → Plugins. (The plugin framework is Phase 3; nothing here exists yet.) Obsidian's connector needs the vault directory mounted into the
+The four built-in plugins ([PLUGINS.md](PLUGINS.md)) are in the image, including Apprise
+(Slack, Teams, ntfy, email, …). Configure them in Settings → Plugins. Three deployment details:
+
+- **Secrets** (a Slack/Teams webhook URL, a Memos token) are referenced in the UI by environment-variable
+  _name_. Put the values in `hub/.env`; the compose file passes that file into the container with
+  `env_file`. They are never written to the database.
+- **Obsidian** needs your vault inside the container: uncomment the `OBSIDIAN_VAULT_DIR` mount in
+  `docker-compose.yml` (read-only is enough — the plugin only reads, except for the optional digest note, which
+  needs a writable mount) and use `/vault` as the vault path.
+- **Third-party plugins**: `FROM ai-core-memory/hub` + `pip install acm-plugin-…`, restart. Setting
+  `MEMORY_HUB_PLUGINS=false` switches every plugin off, and `acm plugins disable <id>` turns one off
+  with the hub stopped. Run a **single** hub process: the plugin scheduler lives inside it. Obsidian's connector needs the vault directory mounted into the
 container (read-only unless you want digest export).
 
 ## Podman

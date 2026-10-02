@@ -48,6 +48,13 @@ class Settings:
     token_rate_limit_per_min: int = field(
         default_factory=lambda: _int("MEMORY_HUB_TOKEN_RATE_LIMIT_PER_MIN", 120)
     )
+    # How often the mechanical consolidation pass runs (decay, duplicates, core budget). 0 disables the scheduler;
+    # `acm consolidate` and the Review screen's "Run now" still work.
+    consolidate_interval_hours: int = field(
+        default_factory=lambda: _int("MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS", 24)
+    )
+    # Plugins (sinks/sources) run in this process. Set MEMORY_HUB_PLUGINS=false to switch every plugin off (an emergency off-switch).
+    plugins_enabled: bool = field(default_factory=lambda: _bool("MEMORY_HUB_PLUGINS", True))
     # OIDC (optional). All three of issuer/client id/secret enable it.
     oidc_issuer: str = field(default_factory=lambda: os.environ.get("MEMORY_HUB_OIDC_ISSUER", "").rstrip("/"))
     oidc_client_id: str = field(default_factory=lambda: os.environ.get("MEMORY_HUB_OIDC_CLIENT_ID", ""))

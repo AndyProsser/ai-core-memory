@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}Plugins{% endblock %}
+{% block content %}
+<header class="page">
+  <div><h1>Plugins</h1><p class="muted">Bring notes in, send notifications out. <a href="/settings">← Settings</a></p></div>
+</header>
+<div class="warning small">
+  Plugins are Python code installed on this hub, so install only ones you trust. They only ever see what you allow below (nothing by default),
+  secrets are never stored here — you give the <em>name</em> of an environment variable — and anything a plugin brings in lands in your inbox, never straight into memory.
+</div>
+
+<h2>Your plugins</h2>
+{% if rows %}
+<table>
+  <thead><tr><th>Name</th><th>Status</th><th>What it can see</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}{% set i = r.i %}
+  <tr>
+    <td><a href="/plugins/{{ i.id }}"><strong>{{ i.name }}</strong></a><div class="small muted">{{ r.plugin.info.name if r.plugin else i.plugin_key ~ ' (not installed)' }}</div></td>
+    <td>
+      {% if not r.plugin %}<span class="badge stale">not installed</span>
+      {% elif i.enabled %}<span class="badge confirmed">on</span>{% else %}<span class="badge">off</span>{% endif %}
+      {% if i.last_status == 'error' %}<span class="badge stale">failing</span>{% elif i.last_status == 'ok' %}<span class="badge established">ok</span>{% endif %}
+      <div class="small muted">{% if i.last_run_at %}last run {{ i.last_run_at|datetime }} UTC{% else %}never run{% endif %}</div>
+      {% if i.last_error %}<div class="small wrap">{{ i.last_error }}</div>{% endif %}
+    </td>
+    <td class="small">
+      {% if r.plugin and r.plugin.info.kind != 'source' %}
+        {% if i.scopes %}{{ i.scopes|join(', ') }}{% if i.projects %} ({{ i.projects|join(', ') }}){% endif %}{% else %}<span class="badge stale">nothing — no scopes allowed</span>{% endif %}
+        {% if i.egress == 'full' %}<br><span class="badge stale">full text</span>{% else %}<br>titles and links only{% endif %}
+        {% if i.user_scope_ack %}<br><span class="badge stale">includes personal memory</span>{% endif %}
+      {% else %}captures into your inbox ({{ i.config.get('inbox_scope', 'user') }}){% endif %}
+    </td>
+    <td><form method="post" action="/plugins/{{ i.id }}/toggle">{{ csrf() }}<button type="submit">{{ 'Turn off' if i.enabled else 'Turn on' }}</button></form></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<div class="empty"><p><strong>No plugins configured.</strong></p><p>Add one below.</p></div>{% endif %}
+
+<h2>Add a plugin</h2>
+{% for p in available %}
+<div class="card">
+  <strong>{{ p.info.name }}</strong>
+  <span class="badge">{{ {'source': 'brings notes in', 'sink': 'sends notifications', 'both': 'both ways'}[p.info.kind] }}</span>
+  <p class="desc">{{ p.info.description }}</p>
+  <a class="btn" href="/plugins/new?plugin={{ p.info.key }}">Add</a>
+</div>
+{% endfor %}
+{% endblock %}

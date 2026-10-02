@@ -204,6 +204,72 @@ class Proposal(SQLModel, table=True):
     decision_note: str | None = None
 
 
+class PluginInstance(SQLModel, table=True):
+    """One configured use of a plugin (e.g. "Slack #memory" using the apprise plugin). Holds no secret values."""
+
+    __tablename__ = "plugin_instances"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    plugin_key: str = Field(index=True)
+    name: str
+    owner_user_id: str = Field(
+        foreign_key="users.id"
+    )  # whose memory a source captures into / whose user-scope a sink may see
+    enabled: bool = False
+    config: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))  # non-secret settings
+    secret_refs: dict = Field(
+        default_factory=dict, sa_column=Column(JSON, nullable=False)
+    )  # {secret name: ENV VAR NAME}, never values
+    scopes: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )  # deny by default: empty sees nothing
+    projects: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )  # project slugs; empty = all within allowed scopes
+    events: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )  # subscribed event types
+    egress: str = "metadata"  # metadata | full
+    user_scope_ack: bool = False  # admin acknowledged that this instance may see the owner's personal memory
+    pull_interval_minutes: int = 60  # source plugins
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    last_run_at: NaiveDatetime | None = None
+    last_status: str | None = None  # ok | error
+    last_error: str | None = None
+    consecutive_failures: int = 0
+    last_digest_at: NaiveDatetime | None = None
+
+
+class Event(SQLModel, table=True):
+    """The outbox: written in the same transaction as the change that caused it. Payloads are minimal
+    (ids, names, links) — bodies are never copied here."""
+
+    __tablename__ = "events"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    type: str = Field(index=True)
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    scope: str | None = None  # project | team | user | None (scope-less, e.g. plugin.failed)
+    project_slug: str | None = None
+    team_slug: str | None = None
+    owner_user_id: str | None = None  # whose user-scope memory it concerns / who it's for
+    instance_id: str | None = None  # set = deliver only to this instance (digests, tests)
+    origin_instance_id: str | None = (
+        None  # the instance whose own activity caused it: never echoed back to it
+    )
+    created_at: NaiveDatetime = Field(default_factory=utcnow, index=True)
+    dispatched_at: NaiveDatetime | None = None
+
+
+class PluginDelivery(SQLModel, table=True):
+    __tablename__ = "plugin_deliveries"
+    event_id: str = Field(foreign_key="events.id", primary_key=True)
+    instance_id: str = Field(foreign_key="plugin_instances.id", primary_key=True)
+    status: str = "pending"  # pending | delivered | dead
+    attempts: int = 0
+    next_attempt_at: NaiveDatetime = Field(default_factory=utcnow, index=True)
+    last_error: str | None = None
+    delivered_at: NaiveDatetime | None = None
+
+
 class InboxItem(SQLModel, table=True):
     __tablename__ = "inbox_items"
     id: str = Field(default_factory=new_id, primary_key=True)

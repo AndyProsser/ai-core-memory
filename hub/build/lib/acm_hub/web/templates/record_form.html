@@ -10,6 +10,9 @@
 <form method="post" action="{{ '/memory/new' if mode == 'new' else '/memory/' ~ rec.id ~ '/edit' }}" class="card">
   {{ csrf() }}
   {% if v.inbox_id %}<input type="hidden" name="inbox_id" value="{{ v.inbox_id }}">{% endif %}
+  {% if v.supersedes %}<input type="hidden" name="supersedes" value="{{ v.supersedes }}">
+  <div class="notice">This will <strong>replace</strong> {% if old %}<a href="/memory/{{ old.id }}">{{ old.name }}</a>{% else %}the earlier record{% endif %}. The old record is kept in history and stops being served.</div>
+  {% if old and old.confidence == 'established' %}<label class="inline spaced"><input type="checkbox" name="confirm_established" value="1"> I'm deliberately retiring an established record</label>{% endif %}{% endif %}
   <div class="row">
     <div><label for="name">Name</label><input id="name" type="text" name="name" value="{{ v.name }}" required pattern="[a-z0-9][a-z0-9\-]{0,79}" maxlength="80"><p class="hint">Short kebab-case slug.</p></div>
     <div><label for="type">Type</label>{{ select('type', types, v.type) }}</div>

@@ -436,9 +436,9 @@ binding constraint.
 | `reinforcements`     | record_id, source_ref, reinforced_at, by_token_id, by_user_id — one row per (record, independent source); the primary key is what stops a session reinforcing itself.                                                                                                                                                                      |
 | `inbox_items`        | id, source (`mcp`/`ui`/`cli`/`plugin:<key>`), scope, project_id, title, body, external_ref (URL/path in the originating system), captured_at, status (`new`/`harvested`/`dismissed`).                                                                           |
 | `proposals`          | id, kind, status (`pending`/`applied`/`rejected`/`expired`), payload (JSON), target_ids, rationale, generated_by (`mechanical`/`dream-skill`/`llm-worker`), generated_by_token_id, dedupe_key, created_at, decided_by_user_id, decided_by_label (`auto`/OS user), decided_at, decision_note. |
-| `plugin_instances`   | id, plugin_key, name, kind (`source`/`sink`/`both`), non-secret config, secret references (env var names, never values), enabled, scope allowlist, event filter, last_run_at, last_status. See [docs/PLUGINS.md](PLUGINS.md).                                  |
-| `events`             | id, type, payload (minimal — ids and titles, not bodies), created_at — the outbox every sink plugin reads from.                                                                                                                                                 |
-| `plugin_deliveries`  | event_id, plugin_instance_id, status, attempts, next_attempt_at, last_error — reliable, retryable, per-plugin delivery.                                                                                                                                         |
+| `plugin_instances`   | id, plugin_key, name, owner_user_id, enabled, config (non-secret settings), secret_refs (env var _names_, never values), scopes, projects, events, egress (`metadata`/`full`), user_scope_ack, pull_interval_minutes, last_run_at, last_status, last_error, consecutive_failures, last_digest_at. See [docs/PLUGINS.md](PLUGINS.md). |
+| `events`             | id, type, payload (minimal — ids, names, links; never bodies), scope, project_slug, team_slug, owner_user_id, instance_id (targeted events), origin_instance_id (loop prevention), created_at, dispatched_at — the outbox every sink plugin reads from. |
+| `plugin_deliveries`  | event_id, instance_id, status (`pending`/`delivered`/`dead`), attempts, next_attempt_at, last_error, delivered_at — reliable, retryable, per-instance delivery. |
 
 ### Access control
 
@@ -574,7 +574,7 @@ core. Two kinds, built on a shared event outbox:
 - **Sinks** subscribe to events (`proposal.pending`, `conflict.flagged`,
   `digest.weekly`, …) and deliver notifications.
 
-Plugins are operator-installed Python packages discovered via entry points, configured
+Plugins (built in Phase 3) are operator-installed Python packages discovered via entry points, configured
 per instance in the UI, with secrets referenced by environment variable name — never
 stored in records or the database. Outbound plugins only ever see scopes the operator
 explicitly allows and, by default, only titles and links, not record bodies. Interface,
@@ -678,11 +678,14 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
 - [ ] LLM-assisted classification _inside_ the hub (`generated_by: llm-worker` is reserved; today
       judgement comes from an AI client pulling the work package)
 
-**Phase 3 — plugins**
+**Phase 3 — plugins** (built)
 
-- [ ] Event outbox + plugin loader + Plugins screen
-- [ ] Sinks: Apprise-based notifier (Slack, Teams, ntfy, email, webhook)
-- [ ] Sources: Obsidian vault and Memos connectors (inbox in, optional digest out)
+- [x] Event outbox (same-transaction, minimal payloads) + dispatcher (retry/backoff, isolation, timeouts,
+      rate limits) + plugin loader (entry points) + Plugins screen + `acm plugins` off-switch
+- [x] Sinks: Apprise-based notifier (Slack, Teams, ntfy, email, …) and a signed webhook
+- [x] Sources: Obsidian vault and Memos connectors (inbox in); Obsidian weekly digest out
+- [ ] Memos digest export; a source for other note systems (Readwise, a git notes repo, …)
+- [ ] Out-of-process plugins (webhook/MCP-based) for people who don't want third-party code in the hub process
 
 **Phase 4 — teams and distribution**
 

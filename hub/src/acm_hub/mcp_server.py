@@ -20,6 +20,7 @@ from sqlmodel import Session, select
 from . import proposals as proposals_mod
 from .access import AccessError, NotFound, Principal
 from .consolidate import build_work_package
+from .events import emit_inbox_new
 from .exportimport import import_files
 from .focus import build_focus
 from .models import InboxItem, InstanceSettings, MemoryRecord, Project
@@ -394,6 +395,7 @@ async def inbox_add(
         )
         s.add(item)
         s.flush()
+        emit_inbox_new(s, item)
         return {"id": item.id, "status": item.status}
 
     return await _run(go)

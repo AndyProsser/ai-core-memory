@@ -2,55 +2,13 @@ import io
 import re
 import zipfile
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from acm_hub.app import create_app
 from acm_hub.auth import issue_setup_code
 from acm_hub.models import ApiToken, MemoryRecord, User
 
-PASSWORD = "correct horse battery staple"
-
-
-@pytest.fixture()
-def hub(settings):
-    root = create_app(settings)
-    with TestClient(root) as client:
-        yield client, root.fastapi
-
-
-def csrf_of(html: str) -> str:
-    m = re.search(r'name="csrf" content="([^"]+)"', html)
-    assert m, "no csrf meta on page"
-    return m.group(1)
-
-
-def setup_admin(client, app, email="admin@example.com"):
-    with Session(app.state.engine) as s:
-        code = issue_setup_code(s)
-    r = client.post(
-        "/setup",
-        data={
-            "setup_code": code,
-            "email": email,
-            "password": PASSWORD,
-            "confirm": PASSWORD,
-            "deployment_mode": "solo",
-        },
-        follow_redirects=False,
-    )
-    assert r.status_code == 303, r.text
-    return r
-
-
-@pytest.fixture()
-def authed(hub):
-    client, app = hub
-    setup_admin(client, app)
-    page = client.get("/memory")
-    assert page.status_code == 200
-    return client, app, csrf_of(page.text)
+from .conftest import PASSWORD, csrf_of, setup_admin  # noqa: F401
 
 
 def test_first_run_redirects_to_setup_and_setup_needs_the_code(hub):

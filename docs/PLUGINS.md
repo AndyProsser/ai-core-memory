@@ -2,9 +2,12 @@
 
 How the memory hub (see [ARCHITECTURE.md § Memory hub](ARCHITECTURE.md#memory-hub-cross-project-store))
 connects to the world outside itself: note systems like Obsidian and Memos, and
-notification channels like Slack and Teams. Same status as the rest of the hub design —
-decided, not yet implemented. Security rules for everything here live in
+notification channels like Slack and Teams. Security rules for everything here live in
 [SECURITY.md § Plugins and egress](SECURITY.md#plugins-and-egress).
+
+**Status: built (Phase 3).** The framework, the event outbox and dispatcher, and four built-in plugins
+(`apprise`, `webhook`, `obsidian`, `memos`) are in [`hub/src/acm_hub/plugins/`](../hub/src/acm_hub/plugins/).
+Where the shipped behaviour differs from the original sketch, this document describes what shipped.
 
 ## Principles
 
@@ -55,44 +58,73 @@ idempotent on `event.id`.
 | `record.superseded`    | a record is replaced by a newer one                                | old id, new id, names                |
 | `proposal.pending`     | consolidation produced a proposal awaiting review                  | id, kind, one-line rationale         |
 | `conflict.flagged`     | new information contradicts a `confirmed`/`established` record     | record id, name, proposal id         |
-| `core.budget_exceeded` | a core promotion was blocked by the token budget                   | proposal id                          |
+| `core.budget_exceeded` | the consolidation pass found core over its token budget and proposed demotions | over by, number of proposals |
 | `inbox.new`            | an inbox item arrived                                              | id, source, title                    |
 | `digest.weekly`        | schedule: summary of what changed, what's pending, what went stale | counts + titles, link to the Review screen |
-| `plugin.failed`        | a plugin instance hit repeated errors                              | plugin instance, last error          |
+| `plugin.failed`        | a plugin instance failed 3 times in a row                          | plugin instance, last error          |
 
 Every payload carries a `link` to the relevant UI screen, so a notification is a pointer
-back to the hub, not a copy of memory.
+back to the hub, not a copy of memory. (A `plugin.test` event, sent by the Plugins screen's
+test button, goes only to the instance being tested.)
+
+**How delivery works** (`hub/src/acm_hub/dispatcher.py`). A scheduler tick (every 10 s, inside the
+hub process; `MEMORY_HUB_PLUGINS=false` switches it off entirely) does three things: _fans out_
+new events into one `plugin_deliveries` row per matching instance; _delivers_ due rows, each in a
+worker thread under a 30 s timeout, committing per delivery so one slow plugin never holds the others
+up; and _purges_ events older than 30 days. Delivery is at-least-once. A failure is retried after
+1 min, 5 min, 30 min, 2 h, 6 h and then marked `dead`; a plugin that reports a definitive rejection
+(HTTP 4xx, a policy refusal) dies immediately instead of retrying. After three failures in a row the
+hub raises a `plugin.failed` event — delivered to _other_ sinks, never to the failing one. Each
+instance is also rate-limited (60 deliveries a minute); over the limit, deliveries wait without
+burning an attempt. A disabled instance's pending deliveries wait until it is enabled again.
+
+**Who gets which event.** An instance receives an event only if all of these hold: it is enabled and
+its plugin can send; it subscribed to that event type; the event's scope is in its scope allowlist
+(and, for project scope, its project list if it has one); **its owner can actually read that
+record** (an admin's Slack instance doesn't learn about another user's private project); for `user`
+scope it carries the explicit acknowledgement _and_ the record is the owner's own; and the event
+wasn't caused by that same instance's own activity (loop prevention). Scope-less events such as
+`plugin.failed` carry no memory content, so they skip the scope list but still stay with their owner.
 
 ## Plugin interface
 
 Discovered via the `acm.plugins` Python entry-point group. A plugin declares metadata, a
 config schema (rendered as a form in the Plugins screen), and implements one or both
-protocols. Sketch — final signatures are settled at implementation time:
+protocols. This is the shape as built (see `hub/src/acm_hub/plugins/base.py`; the _Writing a plugin_ section below has a runnable example):
 
 ```python
 class PluginInfo(BaseModel):
-    key: str                      # "obsidian", "memos", "apprise"
+    key: str                          # "obsidian", "memos", "apprise", "webhook"
     name: str
+    description: str = ""
     kind: Literal["source", "sink", "both"]
-    config_schema: type[BaseModel]   # non-secret settings; secrets are env-var *names*
-    secret_names: list[str] = []     # env vars this plugin expects, e.g. ["SLACK_WEBHOOK_URL"]
-    subscribes_to: list[str] = []    # default event types (operator can narrow)
+    config_schema: type[BaseModel]    # non-secret settings; the Plugins form is generated from it
+    secret_names: list[str] = []      # secrets it needs; the operator maps each to an env var *name*
+    secret_help: dict[str, str] = {}
+    default_events: list[str] = []    # events a new sink instance subscribes to (the operator can narrow)
 
-class SourcePlugin(Protocol):
-    def pull(self, ctx: PluginContext) -> Iterable[InboxItem]: ...
-        # Idempotent: set InboxItem.external_ref so a re-pull doesn't duplicate.
-    def export(self, ctx: PluginContext, records: list[RecordView]) -> None: ...  # optional
+class BasePlugin:                     # implement what applies; everything runs off the request path, under a timeout
+    info: PluginInfo
+    def validate(self, config) -> None: ...                                  # raise ValueError("human message")
+    def deliver(self, ctx: PluginContext, event: Event) -> DeliveryResult: ...   # sinks
+    def pull(self, ctx: PluginContext) -> None: ...                           # sources: call ctx.inbox.add(...)
+    def export_digest(self, ctx: PluginContext, digest: dict) -> None: ...    # sources, optional
 
-class SinkPlugin(Protocol):
-    def deliver(self, ctx: PluginContext, event: Event) -> DeliveryResult: ...
-        # Raise or return DeliveryResult.retry(...) on transient failure.
+class DeliveryResult:                 # .success() | .retry_later(msg) | .failed(msg)  (failed = don't retry)
+
+class Event:                          # already filtered to this instance's allowlist and egress level
+    id: str; type: str; created_at: datetime; payload: dict; link: str | None   # link is absolute
 
 class PluginContext:
-    config: BaseModel             # validated, non-secret
-    secrets: Mapping[str, str]    # resolved from env at call time, never persisted
-    scopes: set[Scope]            # what this instance is allowed to see
-    inbox: InboxWriter            # source plugins only
-    log: Logger                   # secrets are redacted from log output
+    instance_id: str; instance_name: str
+    config: BaseModel                 # validated, non-secret
+    secrets: Mapping[str, str]        # resolved from the environment for this call only; never persisted
+    scopes: frozenset[str]            # what this instance may see
+    egress: str                       # "metadata" | "full"
+    log: LoggerAdapter                # secret values are redacted
+    http: EgressClient                # the only way out: https (or LAN), host allowlist, no redirects, size cap
+    public_url: str
+    inbox: InboxWriter | None         # sources only: .add(title, body, external_ref=...) -> bool
 ```
 
 Rules the loader enforces, so a plugin author can't get them wrong:
@@ -104,10 +136,11 @@ Rules the loader enforces, so a plugin author can't get them wrong:
   `source: plugin:<key>` and an `external_ref`; events caused by a plugin's own writes
   aren't redelivered to that same instance.
 - Calls run with a timeout, in a worker thread, with exceptions caught and recorded —
-  never on the request path.
+  never on the request path. (A thread can't be killed, so a plugin that hangs is _abandoned_ and
+  counted as a failure; it can't block the dispatcher or other plugins, but it does keep its own thread.)
 - Plugins get **no database handle and no token**; the context is the whole API.
 
-## Built-in plugins (planned)
+## Built-in plugins
 
 | Plugin     | Kind   | What it does                                                                                                                                                                                                                                                                                                  |
 | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -115,6 +148,33 @@ Rules the loader enforces, so a plugin author can't get them wrong:
 | `memos`    | source | Uses the Memos REST API (base URL + access token via env var). Pulls memos with a chosen tag (e.g. `#memory`) into the inbox; `external_ref` = memo URL. Optional export: creates a memo for a digest.                                                                                                        |
 | `apprise`  | sink   | One dependency that covers Slack, Microsoft Teams, ntfy, Discord, Telegram, email, and generic webhooks via Apprise URLs held in env vars. This is the recommended path for "notify me / post to a channel" — Slack and Teams don't each get a bespoke plugin unless Apprise proves insufficient.             |
 | `webhook`  | sink   | Plain signed JSON POST (HMAC header) to any URL — the escape hatch for anything else, and a template for writing a new sink.                                                                                                                                                                                  |
+
+Honest notes on each:
+
+- **`apprise`** does its own HTTP, so it doesn't go through the shared egress client. The hub instead
+  checks the _URLs_ before handing them over: plaintext targets (`json://`, `form://`, `xml://`,
+  `http://`) are refused unless they point at localhost or a private network (use `jsons://` etc.), and
+  generic http(s)/json targets honour the instance's `allowed_hosts`. Chat-service URLs
+  (`slack://`, `msteams://`, `ntfys://`, …) are passed through. Install with the `notify` extra
+  (`pip install 'ai-core-memory-hub[notify]'`; the container image includes it). It is tested against a
+  real local HTTP server, not a mock.
+- **`webhook`** signs the compact, key-sorted JSON body with HMAC-SHA256 in `X-ACM-Signature:
+  sha256=<hex>`, and sends `X-ACM-Event` and `X-ACM-Delivery` (the event id — dedupe on it, since delivery is
+  at-least-once). Both the URL and the signing key come from environment variables you name.
+- **`obsidian`** reads the vault directory directly and never writes into your notes. It scans the
+  folders you list (default `Inbox`; `.` for the whole vault), optionally only notes with a tag
+  (frontmatter `tags:` or inline `#tag`), skips hidden folders (`.obsidian`, `.git`, `.trash`), skips
+  symlinks and anything that resolves outside the vault, and skips files over a size limit. A re-pull is
+  idempotent (`external_ref` = the note's relative path): a note edited _before_ you reviewed it updates its
+  inbox item; one you've already harvested or dismissed is left alone. The optional digest export writes
+  `memory-digest-YYYY-MM-DD.md` into one folder inside the vault. In a container, mount the vault read-only
+  (see [DEPLOYMENT.md](DEPLOYMENT.md)) and use the in-container path.
+- **`memos`** is written against the documented v1 REST API (`GET /api/v1/memos`, bearer access token,
+  `nextPageToken` paging) and tested against a mock of that shape — **it has not been run against every
+  Memos release**, and Memos has changed this API between versions. If your server differs, the error shown
+  in the Plugins screen says what it returned (e.g. `Memos returned HTTP 404 for /api/v1/memos`). Tag
+  matching works on either the API's `tags` field or inline `#tags` in the content. Digest export to Memos is
+  not built.
 
 Ideas that fit the same interface without a new design: a `readwise`/`pocket` source, a
 `git` source that watches a notes repo, an `embeddings` plugin offering vector search
@@ -130,13 +190,45 @@ end in the same inbox and the same dream cycle.
 
 ## Operating plugins
 
-- **Install:** add the package to the hub's environment (`pip install acm-plugin-foo`, or
-  bake it into the container image); restart. Entry points make it appear in the
-  Plugins screen.
-- **Configure:** Plugins screen → add instance → fill the generated form → set scope
-  allowlist, egress level, and event filter → **Send test event**. Secrets are env var
-  names; the screen shows whether each resolved, never its value.
-- **Watch:** each instance shows last run, last status, and a retry/failed-delivery
-  count; `plugin.failed` can itself notify through a different sink.
-- **Offline / no-network:** plugins are optional. A hub with none installed behaves
-  identically to one with them, and the `acm` CLI never loads plugins.
+- **Install:** the four built-ins ship with the hub. A third-party plugin is a Python package that
+  exposes a `BasePlugin` subclass (or instance) under the `acm.plugins` entry-point group; install it into
+  the hub's environment (or bake it into the image) and restart. A plugin that fails to load is logged and
+  skipped; it can't stop the hub starting.
+- **Configure** (Settings → Plugins, admin only): add an instance → the form is generated from the plugin's
+  config schema → name the environment variable for each secret → choose the scopes, projects, detail level
+  (titles-and-links by default) and events → **Send a test notification** / **Check now**. The screen shows
+  whether each secret's variable is set, never its value. An instance is created _off_ with _no_ scopes.
+  Removing an instance keeps whatever it already captured in your inbox.
+- **Watch:** each instance shows its last run, last status, consecutive failures and its recent deliveries
+  with errors. Errors are stored with secret values scrubbed out.
+- **Emergency off-switch:** `acm plugins` lists instances and `acm plugins disable <id>` turns one off
+  straight in the database — it works with the hub stopped. `MEMORY_HUB_PLUGINS=false` stops every plugin
+  from running at all.
+- **Offline / no-network:** plugins are optional. A hub with none installed behaves identically to one with
+  them, and the `acm` CLI **never loads or runs plugin code** (a test enforces it).
+
+## Writing a plugin
+
+```python
+from pydantic import BaseModel
+from acm_hub.plugins.base import BasePlugin, DeliveryResult, Event, PluginContext, PluginInfo
+
+
+class MyConfig(BaseModel):
+    room: str                                  # becomes a text field in the Plugins screen
+
+
+class MyChat(BasePlugin):
+    info = PluginInfo(key="mychat", name="My chat", kind="sink", config_schema=MyConfig,
+                      secret_names=["token"], default_events=["proposal.pending"])
+
+    def deliver(self, ctx: PluginContext, event: Event) -> DeliveryResult:
+        r = ctx.http.post("https://chat.example.com/api", json={"room": ctx.config.room, "text": event.type},
+                          headers={"Authorization": f"Bearer {ctx.secrets['token']}"})
+        return DeliveryResult.success() if r.is_success else DeliveryResult.retry_later(f"HTTP {r.status_code}")
+```
+
+Register it in your package's `pyproject.toml`: `[project.entry-points."acm.plugins"] mychat = "my_pkg:MyChat"`.
+Use `ctx.http` for network access (it enforces the egress rules) and `ctx.log` (secrets are redacted). A source
+plugin implements `pull(ctx)` and calls `ctx.inbox.add(title, body, external_ref=...)`; keep `external_ref`
+stable so re-pulls don't duplicate. You get no database handle and no API token — the context is the whole API.

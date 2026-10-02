@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, text
 from sqlmodel import Session, col, select
 
+from . import events
 from .access import (
     AccessError,
     NotFound,
@@ -405,6 +406,7 @@ def _create(
     if data.links:
         _set_links(session, p, rec, data.links)
     rev = _revision(session, p, rec, source=change_source, note=note or "created")
+    events.emit_record_event(session, "record.created", rec)
     if data.source_ref:
         _note_source(
             session, p, rec, data.source_ref
@@ -541,6 +543,9 @@ def _update(
     if links_changed:
         _set_links(session, p, rec, data.links or [])
     rev = _revision(session, p, rec, source=change_source, note=note, flagged=flagged)
+    events.emit_record_event(
+        session, "record.updated", rec, changed=sorted(changed) + (["links"] if links_changed else [])
+    )
     if data.source_ref:
         _note_source(session, p, rec, data.source_ref)
     if data.supersedes:
@@ -874,6 +879,7 @@ def supersede(
     if session.get(MemoryLink, (new.id, old.id, "supersedes")) is None:
         session.add(MemoryLink(from_id=new.id, to_id=old.id, kind="supersedes"))
     session.flush()
+    events.emit_record_event(session, "record.superseded", old, replaced_by=new.name, replaced_by_id=new.id)
     if old.tier == "core" and new.tier != "core" and not p.is_human:
         # An AI client retired a core record: the replacement may deserve its slot, but only a person decides that.
         from . import proposals

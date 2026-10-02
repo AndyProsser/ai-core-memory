@@ -450,6 +450,39 @@ def cmd_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plugins(args: argparse.Namespace) -> int:
+    """Inspect and switch plugin instances straight from the database. Deliberately never loads or runs plugin code:
+    the offline CLI stays free of third-party code, and `disable` is the emergency off-switch that works with the hub down."""
+    from .models import PluginInstance
+
+    with _open() as db:
+        if args.pcmd in (None, "list"):
+            rows = db.exec(select(PluginInstance).order_by(col(PluginInstance.created_at))).all()
+            for i in rows:
+                state = "on" if i.enabled else "off"
+                sees = ",".join(i.scopes) or "nothing"
+                print(
+                    f"{i.id}\t{state}\t{i.plugin_key}\t{i.name}\tsees: {sees}\t{i.egress}\t{i.last_status or '-'}"
+                    + (f"\t{i.last_error}" if i.last_error else "")
+                )
+            print(f"{len(rows)} plugin instance(s)", file=sys.stderr)
+            return 0
+        inst = db.get(PluginInstance, args.id)
+        if inst is None:
+            raise CliError("No such plugin instance (see `acm plugins`).")
+        if args.pcmd == "disable":
+            inst.enabled = False
+            msg = f"Disabled {inst.name}. It will not send or pull anything."
+        else:
+            inst.enabled = True
+            inst.consecutive_failures = 0
+            msg = f"Enabled {inst.name}."
+        db.add(inst)
+        db.commit()
+        print(msg)
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -604,6 +637,17 @@ def build_parser() -> argparse.ArgumentParser:
     rj = rsub.add_parser("reject", help="reject a proposal (it won't be re-raised for 30 days)")
     rj.add_argument("id")
     rj.add_argument("--note")
+
+    pl = sub.add_parser(
+        "plugins", help="list plugin instances, or switch one off/on (never runs plugin code)"
+    )
+    pl.set_defaults(fn=cmd_plugins, pcmd=None)
+    psub = pl.add_subparsers(dest="pcmd")
+    psub.add_parser("list", help="list instances (default)")
+    pd = psub.add_parser("disable", help="emergency off-switch for an instance")
+    pd.add_argument("id")
+    pe = psub.add_parser("enable", help="turn an instance back on")
+    pe.add_argument("id")
 
     sv = add("serve", cmd_serve, "run the hub (web UI, REST, MCP)", user=False)
     sv.add_argument("--host", default="127.0.0.1")

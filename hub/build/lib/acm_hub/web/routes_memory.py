@@ -7,11 +7,12 @@ import re
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
-from sqlmodel import col, select
+from sqlmodel import select
 
 from ..access import NotFound, readable_project_ids, require_read, require_write
+from ..events import emit_inbox_new
 from ..focus import DEFAULT_BUDGET, build_focus
-from ..models import InboxItem, InstanceSettings, MemoryRecord, MemoryRevision, Project, Team
+from ..models import InboxItem, InstanceSettings, MemoryRecord, Project, Team
 from ..records import (
     CONFIDENCES,
     STATUSES,
@@ -26,7 +27,9 @@ from ..records import (
     list_records,
     pending_conflicts,
     project_slug,
+    reinforce_review,
     resolve_conflict,
+    supersession_chain,
     team_slug,
     write_record,
 )
@@ -153,11 +156,21 @@ def _form_defaults(ctx: Ctx, **over) -> dict:  # noqa: ANN003
         "topics": "",
         "links": "",
         "inbox_id": "",
+        "supersedes": "",
     }
     return base | over
 
 
-def _new_form(request: Request, ctx: Ctx, values: dict, error: str = "", status: int = 200):  # noqa: ANN202
+def _new_form(
+    request: Request,
+    ctx: Ctx,
+    values: dict,
+    error: str = "",
+    status: int = 200,
+    old: MemoryRecord | None = None,
+):  # noqa: ANN202
+    if old is None and values.get("supersedes"):
+        old = ctx.db.get(MemoryRecord, values["supersedes"])
     return render(
         request,
         "record_form.html",
@@ -165,6 +178,7 @@ def _new_form(request: Request, ctx: Ctx, values: dict, error: str = "", status:
         status=status,
         mode="new",
         rec=None,
+        old=old,
         v=values,
         error=error,
         types=TYPES,
@@ -179,9 +193,29 @@ def _new_form(request: Request, ctx: Ctx, values: dict, error: str = "", status:
 
 @router.get("/memory/new")
 def memory_new(
-    request: Request, inbox_id: str = "", scope: str = "", project: str = "", ctx: Ctx = Depends(require_user)
+    request: Request,
+    inbox_id: str = "",
+    scope: str = "",
+    project: str = "",
+    supersedes: str = "",
+    ctx: Ctx = Depends(require_user),
 ):  # noqa: ANN201
     vals = _form_defaults(ctx, scope=scope or "project", project=project)
+    old = None
+    if supersedes:
+        old = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, supersedes))
+        vals |= {
+            "name": f"{old.name[:73]}-v2",
+            "description": old.description,
+            "body": old.body,
+            "type": old.type,
+            "scope": old.scope,
+            "project": project_slug(ctx.db, old) or "",
+            "confidence": "confirmed" if old.confidence != "observed" else "observed",
+            "tier": old.tier,
+            "topics": ", ".join(old.topics),
+            "supersedes": old.id,
+        }
     if inbox_id:
         item = ctx.db.get(InboxItem, inbox_id)
         if item is None or item.owner_user_id != ctx.user.id:
@@ -195,7 +229,7 @@ def memory_new(
         }
         if item.project_id and (proj := ctx.db.get(Project, item.project_id)):
             vals["project"] = proj.slug
-    return _new_form(request, ctx, vals)
+    return _new_form(request, ctx, vals, old=old)
 
 
 @router.post("/memory/new")
@@ -213,6 +247,8 @@ def memory_create(
     topics: str = Form(""),
     links: str = Form(""),
     inbox_id: str = Form(""),
+    supersedes: str = Form(""),
+    confirm_established: str = Form(""),
     ctx: Ctx = Depends(user_csrf),
 ):  # noqa: ANN201
     vals = _form_defaults(
@@ -229,6 +265,7 @@ def memory_create(
         topics=topics,
         links=links,
         inbox_id=inbox_id,
+        supersedes=supersedes,
     )
     try:
         res = write_record(
@@ -246,9 +283,11 @@ def memory_create(
                 tier=tier,
                 topics=_csv(topics),
                 links=_names_to_ids(ctx, links) or None,
+                supersedes=[supersedes] if supersedes else None,
             ),
             change_source="ui",
-            note="created in the web UI",
+            note="created in the web UI" if not supersedes else "created to replace an older record",
+            confirm_established=bool(confirm_established),
         )
         if inbox_id and (item := ctx.db.get(InboxItem, inbox_id)) and item.owner_user_id == ctx.user.id:
             item.status = "harvested"
@@ -283,6 +322,14 @@ def _detail_context(ctx: Ctx, rec: MemoryRecord) -> dict:
         "revisions": revs,
         "diffs": diffs,
         "related": linked_records(ctx.db, ctx.principal, rec),
+        "chain": supersession_chain(ctx.db, ctx.principal, rec),
+        "replaced_by": [
+            r
+            for r in supersession_chain(ctx.db, ctx.principal, rec)
+            if r.created_at > rec.created_at and r.status != "superseded"
+        ][-1:]
+        if rec.status == "superseded"
+        else [],
         "conflicts": pending_conflicts(ctx.db, rec.id),
         "tokens": core_usage(ctx.db, ctx.principal),
     }
@@ -344,7 +391,7 @@ def memory_edit(
     confirm_established: str = Form(""),
     ctx: Ctx = Depends(user_csrf),
 ):  # noqa: ANN201
-    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))  # type: ignore[arg-type]
+    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))
     d = _detail_context(ctx, rec)
     vals = _form_defaults(
         ctx,
@@ -412,7 +459,7 @@ def memory_quick(
     confirm_established: str = Form(""),
     ctx: Ctx = Depends(user_csrf),
 ) -> RedirectResponse:
-    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))  # type: ignore[arg-type]
+    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))
     try:
         write_record(
             ctx.db,
@@ -427,6 +474,23 @@ def memory_quick(
         ctx.db.rollback()
         return RedirectResponse(notice_url(f"/memory/{rid}", str(e)), status_code=303)
     return RedirectResponse(notice_url(f"/memory/{rid}", "Updated."), status_code=303)
+
+
+@router.post("/memory/{rid}/still-true")
+def memory_still_true(rid: str, ctx: Ctx = Depends(user_csrf)) -> RedirectResponse:
+    """A person confirms the record still holds: restarts its decay clock; changes nothing else."""
+    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))
+    if rec.status == "stale":
+        write_record(
+            ctx.db,
+            ctx.principal,
+            RecordIn(id=rec.id, status="active"),
+            change_source="ui",
+            note="marked as still true",
+        )
+    reinforce_review(ctx.db, ctx.principal, rec, change_source="ui")
+    ctx.db.commit()
+    return RedirectResponse(notice_url(f"/memory/{rid}", "Marked as still true."), status_code=303)
 
 
 @router.post("/memory/{rid}/conflicts/{rev_id}")
@@ -455,37 +519,6 @@ def memory_resolve(
 # --- Review (inbox) -----------------------------------------------------------------------------------
 
 
-@router.get("/review")
-def review(request: Request, ctx: Ctx = Depends(require_user)):  # noqa: ANN201
-    items = ctx.db.exec(
-        select(InboxItem)
-        .where(InboxItem.owner_user_id == ctx.user.id, InboxItem.status == "new")
-        .order_by(col(InboxItem.captured_at).desc())
-    ).all()
-    pending = ctx.db.exec(
-        select(MemoryRevision).where(
-            col(MemoryRevision.applied).is_(False), col(MemoryRevision.flagged).is_(True)
-        )
-    ).all()
-    pending = [r for r in pending if ctx.db.get(MemoryRecord, r.memory_record_id) and _readable(ctx, r)]
-    return render(
-        request,
-        "review.html",
-        ctx,
-        items=items,
-        pending=pending,
-        projects=_project_choices(ctx),
-        names={r.memory_record_id: ctx.db.get(MemoryRecord, r.memory_record_id).name for r in pending},
-    )  # type: ignore[union-attr]
-
-
-def _readable(ctx: Ctx, rev: MemoryRevision) -> bool:
-    from ..access import can_read
-
-    rec = ctx.db.get(MemoryRecord, rev.memory_record_id)
-    return bool(rec and can_read(ctx.db, ctx.principal, rec))
-
-
 @router.post("/inbox")
 def inbox_add(
     request: Request,
@@ -504,16 +537,12 @@ def inbox_add(
         if proj is None or proj.id not in readable_project_ids(ctx.db, ctx.principal):
             raise NotFound("No such project.")
         pid = proj.id
-    ctx.db.add(
-        InboxItem(
-            owner_user_id=ctx.user.id,
-            source="ui",
-            scope=scope,
-            project_id=pid,
-            title=title.strip(),
-            body=body,
-        )
+    item = InboxItem(
+        owner_user_id=ctx.user.id, source="ui", scope=scope, project_id=pid, title=title.strip(), body=body
     )
+    ctx.db.add(item)
+    ctx.db.flush()
+    emit_inbox_new(ctx.db, item)
     ctx.db.commit()
     dest = next if next.startswith("/") and not next.startswith("//") else "/review"
     return RedirectResponse(notice_url(dest, "Captured to the inbox."), status_code=303)

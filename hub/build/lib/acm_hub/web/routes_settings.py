@@ -8,7 +8,7 @@ from sqlmodel import col, select
 
 from ..access import AccessError, readable_project_ids
 from ..auth import mint_token, recently_authenticated
-from ..models import ApiToken, InstanceSettings, Project, utcnow
+from ..models import ApiToken, InstanceSettings, Project, WebSession, utcnow
 from ..records import ValidationFailed
 from ..security import check_password_policy, hash_password, verify_password
 from .deps import Ctx, notice_url, render, require_user, user_csrf
@@ -75,6 +75,11 @@ def set_password(
         return RedirectResponse(notice_url("/settings", problem), status_code=303)
     ctx.user.password_hash = hash_password(new)
     ctx.db.add(ctx.user)
+    # A password change should end every other login (a stolen session shouldn't survive it).
+    for ws in ctx.db.exec(
+        select(WebSession).where(WebSession.user_id == ctx.user.id, WebSession.id != ctx.ws.id)
+    ).all():
+        ctx.db.delete(ws)
     ctx.db.commit()
     return RedirectResponse(notice_url("/settings", "Password changed."), status_code=303)
 
@@ -129,6 +134,10 @@ def update_instance(
     core_token_budget: int = Form(2000),
     default_token_expiry_days: int = Form(90),
     max_token_expiry_days: int = Form(365),
+    stale_after_days_observed: int = Form(90),
+    stale_after_days_confirmed: int = Form(365),
+    review_established_days: int = Form(365),
+    auto_apply_proposals: str = Form(""),
     ctx: Ctx = Depends(user_csrf),
 ) -> RedirectResponse:
     if not ctx.user.is_admin:
@@ -141,7 +150,16 @@ def update_instance(
         raise ValidationFailed(
             "Core budget must be 200–20000 tokens; token expiry must be 1+ days and no more than the maximum."
         )
+    if not all(
+        7 <= d <= 3650
+        for d in (stale_after_days_observed, stale_after_days_confirmed, review_established_days)
+    ):
+        raise ValidationFailed("Staleness and review windows must be between 7 and 3650 days.")
     inst = ctx.db.get(InstanceSettings, 1) or InstanceSettings(id=1)
+    inst.stale_after_days_observed = stale_after_days_observed
+    inst.stale_after_days_confirmed = stale_after_days_confirmed
+    inst.review_established_days = review_established_days
+    inst.auto_apply_proposals = bool(auto_apply_proposals)
     inst.deployment_mode = deployment_mode
     inst.core_token_budget = core_token_budget
     inst.default_token_expiry_days = default_token_expiry_days

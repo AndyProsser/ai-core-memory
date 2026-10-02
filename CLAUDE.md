@@ -49,8 +49,8 @@ are load-bearing for everything else in the repo.
 
 ## Scope of changes
 
-Phase 1 of the hub is built (see ARCHITECTURE.md → Roadmap for what is and isn't). Don't
-start on later roadmap phases (proposal queue, plugins, teams UI, the Claude Code plugin)
+Phases 1–3 of the hub are built (core, lifecycle/consolidation, plugins) (see ARCHITECTURE.md → Roadmap for what is and isn't). Don't
+start on later roadmap phases (teams UI, the Claude Code plugin)
 unless explicitly asked — "the design is decided" and "go build it" are separate asks. When
 working in `hub/`, run `pip install -e '.[dev]'` and `pytest` there; every change needs
 tests, and security-relevant behaviour (auth, tokens, access, import/export) needs a test

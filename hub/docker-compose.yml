@@ -13,6 +13,13 @@ services:
       - "${MEMORY_HUB_BIND:-127.0.0.1}:${MEMORY_HUB_PORT:-8000}:8000"
     volumes:
       - hub-data:/data
+      # Obsidian plugin: mount your vault read-only and use /vault as its path in Settings → Plugins.
+      # - ${OBSIDIAN_VAULT_DIR}:/vault:ro
+    # Plugin secrets (Slack/Teams webhook URLs, a Memos token, ...) are referenced *by environment variable name* in the
+    # Plugins screen; put the values in .env and they reach the container here. They are never written to the database.
+    env_file:
+      - path: .env
+        required: false
     environment:
       MEMORY_HUB_DB_PATH: /data/hub.sqlite3
       MEMORY_HUB_SECRET_KEY: ${MEMORY_HUB_SECRET_KEY:?set MEMORY_HUB_SECRET_KEY in .env}
@@ -20,6 +27,7 @@ services:
       MEMORY_HUB_ADMIN_EMAIL: ${MEMORY_HUB_ADMIN_EMAIL:-}
       MEMORY_HUB_TRUST_PROXY: ${MEMORY_HUB_TRUST_PROXY:-false}
       MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS: ${MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS:-24}
+      MEMORY_HUB_PLUGINS: ${MEMORY_HUB_PLUGINS:-true}  # false = emergency off-switch for every plugin
       # Optional single sign-on. Leave empty for local accounts only.
       MEMORY_HUB_OIDC_ISSUER: ${MEMORY_HUB_OIDC_ISSUER:-}
       MEMORY_HUB_OIDC_CLIENT_ID: ${MEMORY_HUB_OIDC_CLIENT_ID:-}

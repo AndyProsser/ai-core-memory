@@ -254,7 +254,27 @@ to the wrong Slack channel can't be un-posted.
   from plugins goes through one egress helper that refuses non-HTTPS targets (except
   localhost/RFC1918) and can be restricted by an operator-configured host allowlist.
 - **Auditable.** Every delivery and every inbound pull is recorded (`plugin_deliveries`,
-  `change_source = 'plugin'` on any resulting revision) and visible in the Plugins screen.
+  last status/error on the instance) and visible in the Plugins screen. (Source plugins only add inbox
+  items, so there are no `plugin`-sourced revisions to audit; what they capture is marked `plugin:<key>`.)
+
+**What is enforced, and where the limits are** (Phase 3):
+
+- _Enforced and tested:_ the scope/project allowlist is deny-by-default; an instance only receives events
+  its **owner could read themselves**; `user` scope needs the acknowledgement _and_ is only ever the owner's
+  own; payloads never contain record bodies (full text is fetched at delivery time, only at `egress: full`,
+  only if the record is itself allowed); secrets are env-var _names_ in the database and are scrubbed from
+  stored errors and logs; the egress client refuses non-HTTPS (except localhost/private LAN), follows no
+  redirects, honours the host allowlist and caps response size; an instance never receives events its own
+  activity caused; plugins are admin-configured only; the offline CLI never loads plugin code; plugin
+  failures, hangs and floods are isolated and rate-limited.
+- _Tested by mutation:_ removing the user-scope acknowledgement check, the owner-visibility check, secret
+  redaction, or the Obsidian path guards makes the corresponding tests fail.
+- _Limits, stated plainly:_ plugins are **trusted code running in the hub process** — an installed plugin
+  could do anything the hub process can; the guards above constrain plugins that use the provided context,
+  not a malicious one. `apprise` does its own HTTP (the hub validates the URLs it is given, but doesn't proxy
+  the traffic). A hung plugin call is abandoned, not killed. The plugin scheduler is in-process, so run a
+  single hub process. Nothing stops an operator from choosing `egress: full` and a public channel, so the
+  Plugins screen flags full-text and personal-memory instances loudly.
 
 ## Proposals: AI suggestions, human decisions
 

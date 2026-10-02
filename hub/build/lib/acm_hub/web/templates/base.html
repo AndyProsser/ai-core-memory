@@ -18,10 +18,10 @@
     <div class="brand">◆ Memory hub</div>
     {% set path = request.url.path %}
     <a class="nav" href="/memory" {% if path.startswith('/memory') %}aria-current="page"{% endif %}>Memory</a>
-    <a class="nav" href="/review" {% if path.startswith('/review') %}aria-current="page"{% endif %}>Review{% if inbox_count %} <span class="count" aria-label="{{ inbox_count }} waiting">{{ inbox_count }}</span>{% endif %}</a>
+    <a class="nav" href="/review" {% if path.startswith('/review') %}aria-current="page"{% endif %}>Review{% set waiting = (inbox_count or 0) + (proposal_count or 0) %}{% if waiting %} <span class="count" aria-label="{{ waiting }} waiting">{{ waiting }}</span>{% endif %}</a>
     <a class="nav" href="/focus" {% if path.startswith('/focus') %}aria-current="page"{% endif %}>Focus</a>
     <a class="nav" href="/data" {% if path.startswith('/data') %}aria-current="page"{% endif %}>Data</a>
-    <a class="nav" href="/settings" {% if path.startswith('/settings') %}aria-current="page"{% endif %}>Settings</a>
+    <a class="nav" href="/settings" {% if path.startswith('/settings') or path.startswith('/plugins') %}aria-current="page"{% endif %}>Settings</a>
     <div class="rail-bottom">
       <button type="button" data-open-capture>+ Capture <kbd>c</kbd></button>
       <div class="theme-switch" role="group" aria-label="Theme">

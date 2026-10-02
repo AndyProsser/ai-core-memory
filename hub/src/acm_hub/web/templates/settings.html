@@ -63,6 +63,8 @@
 </form>
 
 {% if user.is_admin %}
+<h2>Plugins</h2>
+<p class="muted">Connect Obsidian or Memos to your inbox, and send notifications to Slack, Teams, ntfy or email. <a href="/plugins">Manage plugins →</a></p>
 <h2>Instance</h2>
 <form method="post" action="/settings/instance" class="card">
   {{ csrf() }}

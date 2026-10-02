@@ -1,7 +1,12 @@
+import re
+
 import pytest
+from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from acm_hub.access import Principal, principal_for_user
+from acm_hub.app import create_app
+from acm_hub.auth import issue_setup_code
 from acm_hub.config import Settings
 from acm_hub.db import make_engine, migrate
 from acm_hub.models import InstanceSettings, User
@@ -52,3 +57,48 @@ def human(db, user) -> Principal:
 
 def token_principal(user, **kw) -> Principal:
     return Principal(user_id=user.id, email=user.email, kind="token", token_id=None, **kw)
+
+
+# --- shared web fixtures (used by test_web.py, test_plugins_ui.py, ...) ---------------------------------
+
+PASSWORD = "correct horse battery staple"
+
+
+@pytest.fixture()
+def hub(settings):
+    root = create_app(settings)
+    with TestClient(root) as client:
+        yield client, root.fastapi
+
+
+def csrf_of(html: str) -> str:
+    m = re.search(r'name="csrf" content="([^"]+)"', html)
+    assert m, "no csrf meta on page"
+    return m.group(1)
+
+
+def setup_admin(client, app, email="admin@example.com"):
+    with Session(app.state.engine) as s:
+        code = issue_setup_code(s)
+    r = client.post(
+        "/setup",
+        data={
+            "setup_code": code,
+            "email": email,
+            "password": PASSWORD,
+            "confirm": PASSWORD,
+            "deployment_mode": "solo",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
+    return r
+
+
+@pytest.fixture()
+def authed(hub):
+    client, app = hub
+    setup_admin(client, app)
+    page = client.get("/memory")
+    assert page.status_code == 200
+    return client, app, csrf_of(page.text)
