@@ -1,0 +1,28 @@
+# Self-hosting the memory hub: one container, one volume, no other services.
+#   cp .env.example .env   # set MEMORY_HUB_SECRET_KEY and MEMORY_HUB_PUBLIC_URL
+#   docker compose up -d --build
+#   docker compose logs memory-hub | grep "setup code"    # then open the URL and finish first-run setup
+services:
+  memory-hub:
+    build: .
+    image: ai-core-memory/hub:latest
+    restart: unless-stopped
+    ports:
+      # Loopback by default. To serve your LAN set MEMORY_HUB_BIND=0.0.0.0; for anything beyond a LAN put a TLS
+      # reverse proxy in front and set MEMORY_HUB_TRUST_PROXY=true.
+      - "${MEMORY_HUB_BIND:-127.0.0.1}:${MEMORY_HUB_PORT:-8000}:8000"
+    volumes:
+      - hub-data:/data
+    environment:
+      MEMORY_HUB_DB_PATH: /data/hub.sqlite3
+      MEMORY_HUB_SECRET_KEY: ${MEMORY_HUB_SECRET_KEY:?set MEMORY_HUB_SECRET_KEY in .env}
+      MEMORY_HUB_PUBLIC_URL: ${MEMORY_HUB_PUBLIC_URL:-http://localhost:8000}
+      MEMORY_HUB_ADMIN_EMAIL: ${MEMORY_HUB_ADMIN_EMAIL:-}
+      MEMORY_HUB_TRUST_PROXY: ${MEMORY_HUB_TRUST_PROXY:-false}
+      # Optional single sign-on. Leave empty for local accounts only.
+      MEMORY_HUB_OIDC_ISSUER: ${MEMORY_HUB_OIDC_ISSUER:-}
+      MEMORY_HUB_OIDC_CLIENT_ID: ${MEMORY_HUB_OIDC_CLIENT_ID:-}
+      MEMORY_HUB_OIDC_CLIENT_SECRET: ${MEMORY_HUB_OIDC_CLIENT_SECRET:-}
+
+volumes:
+  hub-data:

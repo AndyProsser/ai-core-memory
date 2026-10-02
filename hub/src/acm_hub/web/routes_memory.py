@@ -344,7 +344,7 @@ def memory_edit(
     confirm_established: str = Form(""),
     ctx: Ctx = Depends(user_csrf),
 ):  # noqa: ANN201
-    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))  # type: ignore[arg-type]
+    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))
     d = _detail_context(ctx, rec)
     vals = _form_defaults(
         ctx,
@@ -412,7 +412,7 @@ def memory_quick(
     confirm_established: str = Form(""),
     ctx: Ctx = Depends(user_csrf),
 ) -> RedirectResponse:
-    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))  # type: ignore[arg-type]
+    rec = require_write(ctx.db, ctx.principal, ctx.db.get(MemoryRecord, rid))
     try:
         write_record(
             ctx.db,

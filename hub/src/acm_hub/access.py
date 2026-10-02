@@ -138,8 +138,8 @@ def require_read(session: Session, p: Principal, rec: MemoryRecord | None) -> Me
     return rec
 
 
-def require_write(session: Session, p: Principal, rec: MemoryRecord) -> MemoryRecord:
-    if not can_read(session, p, rec):
+def require_write(session: Session, p: Principal, rec: MemoryRecord | None) -> MemoryRecord:
+    if rec is None or not can_read(session, p, rec):
         raise NotFound("No such record.")
     if not can_write(session, p, rec):
         raise AccessError("You can read this record but not change it.")

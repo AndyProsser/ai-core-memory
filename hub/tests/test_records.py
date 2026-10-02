@@ -1,5 +1,5 @@
-from sqlmodel import select
 import pytest
+from sqlmodel import select
 
 from acm_hub.access import AccessError, NotFound
 from acm_hub.focus import build_focus
@@ -50,7 +50,7 @@ def test_rule_cannot_be_observed(db, human):
 
 
 def test_established_blocks_tokens_and_needs_human_confirmation(db, human, user):
-    r = write_record(db, human, rec(confidence="established"), change_source="ui").record
+    write_record(db, human, rec(confidence="established"), change_source="ui")
     tok = token_principal(user)
     with pytest.raises(Conflict) as e:
         write_record(db, tok, rec(body="changed"), change_source="mcp-write")
@@ -112,9 +112,10 @@ def test_user_scope_is_private_even_from_admin(db, human):
 
 
 def test_project_visibility(db, human):
+    from sqlmodel import select
+
     from acm_hub.access import principal_for_user
     from acm_hub.models import Project
-    from sqlmodel import select
 
     write_record(db, human, rec(), change_source="ui")
     other = principal_for_user(db, make_user(db, "b@example.com", admin=False))
@@ -131,8 +132,9 @@ def test_project_visibility(db, human):
 def test_project_limited_token(db, human, user):
     write_record(db, human, rec(), change_source="ui")
     write_record(db, human, rec(name="other", project="blog"), change_source="ui")
-    from acm_hub.models import Project
     from sqlmodel import select
+
+    from acm_hub.models import Project
 
     pid = db.exec(select(Project).where(Project.slug == "payments")).one().id
     tok = token_principal(user, token_project_ids=[pid])

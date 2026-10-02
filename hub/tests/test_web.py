@@ -359,3 +359,57 @@ def test_inbox_capture_and_conversion(authed):
         },
     )
     assert "Idea: try SQLite FTS" not in client.get("/review").text  # harvested
+
+
+def test_templates_have_no_inline_styles_or_scripts():
+    """The CSP (style-src 'self', script-src 'self') silently drops inline styles/scripts, so they must never appear."""
+    from pathlib import Path
+
+    import acm_hub.web as web
+
+    for f in (Path(web.__file__).parent / "templates").glob("*.html"):
+        text = f.read_text()
+        assert " style=" not in text, f"{f.name} uses an inline style attribute (blocked by CSP)"
+        assert not re.search(r"<script(?![^>]*\bsrc=)", text), f"{f.name} has an inline <script>"
+        assert not re.search(r"\bon[a-z]+=", text), f"{f.name} has an inline event handler"
+
+
+def test_missing_and_foreign_records_are_404_not_500(authed):
+    client, app, token = authed
+    ghost = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    assert client.get(f"/memory/{ghost}").status_code == 404
+    assert (
+        client.post(
+            f"/memory/{ghost}/edit", data={"csrf_token": token, "name": "x", "description": "d"}
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(f"/memory/{ghost}/quick", data={"csrf_token": token, "tier": "core"}).status_code == 404
+    )
+    assert (
+        client.post(
+            f"/memory/{ghost}/conflicts/{ghost}", data={"csrf_token": token, "action": "apply"}
+        ).status_code
+        == 404
+    )
+
+
+def test_password_change_ends_other_sessions(authed):
+    client, app, token = authed
+    other = TestClient(app)  # a second browser, signed in as the same person
+    other.post("/login", data={"email": "admin@example.com", "password": PASSWORD})
+    assert other.get("/memory", follow_redirects=False).status_code == 200
+    new = "an entirely different passphrase"
+    r = client.post(
+        "/settings/password",
+        data={"csrf_token": token, "current": PASSWORD, "new": new, "confirm": new},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and "changed" in r.headers["location"]
+    assert client.get("/memory", follow_redirects=False).status_code == 200  # this session stays
+    assert other.get("/memory", follow_redirects=False).status_code == 303  # the other one is gone
+    assert (
+        TestClient(app).post("/login", data={"email": "admin@example.com", "password": PASSWORD}).status_code
+        == 401
+    )

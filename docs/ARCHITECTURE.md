@@ -156,13 +156,14 @@ instead of everything or nothing. It's a retrieval contract, not a storage featu
 it works over plain files too (read core, read the scope `MEMORY.md` indexes, open
 what's relevant) — the hub just does it faster and with ranking.
 
-`memory.focus(task, project?, paths?, topics?, budget?)` returns a **context pack**:
+`memory.focus(task, project?, topics?, budget?, include_other_projects?)` returns a **context pack**:
 
 1. All visible `core` records (always, within the core budget).
 2. Candidate `associated` records, `status = active` only, found by SQLite FTS5 match of
    the task text against name/description/body, plus any records tagged with the given
    or inferred `topics`, plus a one-hop expansion across `links` from core records and
-   top hits.
+   top hits. **With a `project` in play, other projects' `project`-scope records stay out**
+   unless `include_other_projects` is set — the cross-talk rule applies to retrieval too.
 3. Candidates ranked by **relevance × scope weight (narrow wins) × confidence weight ×
    reinforcement/recency weight**, then packed to the budget (default ≈4,000 tokens):
    full body for the top few, `name + description` only for the rest (progressive
@@ -171,7 +172,10 @@ what's relevant) — the hub just does it faster and with ranking.
    so focus is explainable and debuggable — the web UI's "Focus preview" runs this exact
    function so a person can see what an AI would be handed for a given task.
 
-Two deliberate limits. **No embeddings in the core path** — consistent with the
+The core budget is enforced when a record is promoted, against the core records visible to
+the person doing the promoting — exact per-session accounting across user, team, and project
+core arrives with the Phase 2 proposal flow; focus reports (rather than hides) an
+over-budget core set. Two deliberate limits. **No embeddings in the core path** — consistent with the
 non-goals above; FTS5 + topics + links is enough for thousands of curated records, and a
 vector index can arrive later as a [plugin](PLUGINS.md), not a dependency. And
 **retrieval is not reinforcement**: `last_retrieved` is recorded (it feeds staleness
@@ -352,10 +356,12 @@ binding constraint.
 | `teams`              | id, name, slug, created_at.                                                                                                                                                                                                                                     |
 | `team_members`       | team_id, user_id, role (`owner`/`member`) — who's on a team, opt-in per "Team scope is opt-in."                                                                                                                                                                 |
 | `projects`           | id, slug, team_id (nullable), owner_user_id (nullable), visibility (`private`/`team`/`public`) — see SECURITY.md § Visibility.                                                                                                                                  |
-| `api_tokens`         | id, user_id, token_hash, label, project_ids (scope), access_level (`read_only`/`read_write`), expires_at, created_at, last_used_at, revoked_at.                                                                                                                 |
+| `api_tokens`         | id, user_id, token_hash, prefix, label, project_ids (scope; empty = all the user's projects), include_user_scope, access_level (`read_only`/`read_write`), expires_at, created_at, last_used_at, revoked_at.                                                                                                                 |
 | `memory_records`     | id, scope, type, confidence, **tier**, **status**, name, description, body (markdown), **topics**, project_id/team_id/user_id (whichever applies to its scope), **valid_from/valid_to**, **last_reinforced**, **reinforcement_count**, **last_retrieved**, created_at, updated_at, source. |
 | `memory_links`       | from_id, to_id, kind (`related`/`supersedes`) — the graph behind `links` and `supersedes`.                                                                                                                                                                      |
-| `memory_revisions`   | id, memory_record_id, body snapshot, confidence, tier, status, changed_by_user_id, changed_by_token_id, changed_at, change_note, change_source (`dream-cycle`/`mcp-write`/`import`/`ui`/`cli`/`plugin`/`mechanical`).                                           |
+| `memory_revisions`   | id, memory_record_id, snapshot (name, description, body, type, scope, confidence, tier, status, topics), changed_by_user_id, changed_by_token_id, changed_by_label (OS user for CLI), changed_at, change_note, flagged, applied (false = a pending import/sync conflict awaiting a human), change_source (`dream-cycle`/`mcp-write`/`import`/`ui`/`cli`/`plugin`/`mechanical`).                                           |
+| `web_sessions`       | id (SHA-256 of the cookie value), user_id, csrf_token, created_at, authenticated_at, last_seen_at, expires_at — server-side login sessions for the web UI (never used for token routes).                                                                                                                                          |
+| `auth_flows`         | state_hash, nonce, code_verifier, binding_hash, reauth, created_at — short-lived in-flight OIDC logins (state/nonce/PKCE), single use.                                                                                                                                                                                                    |
 | `inbox_items`        | id, source (`mcp`/`ui`/`cli`/`plugin:<key>`), scope, project_id, title, body, external_ref (URL/path in the originating system), captured_at, status (`new`/`harvested`/`dismissed`).                                                                           |
 | `proposals`          | id, kind, target_record_ids, proposed_diff, rationale, generated_by (`mechanical`/`dream-skill`/`llm-worker`), status (`pending`/`approved`/`rejected`/`applied`/`expired`), decided_by_user_id, decided_at.                                                     |
 | `plugin_instances`   | id, plugin_key, name, kind (`source`/`sink`/`both`), non-secret config, secret references (env var names, never values), enabled, scope allowlist, event filter, last_run_at, last_status. See [docs/PLUGINS.md](PLUGINS.md).                                  |
@@ -395,16 +401,20 @@ Three audiences, three ways in, one process, one set of access-control rules:
   memory works here with **no AI in the loop**: browsing and editing records with their
   revision history, the proposal review queue, inbox quick-capture, focus preview,
   token minting/revocation, teams and users, plugin configuration, import/export. The UI
-  is specified in [docs/UI.md](UI.md). REST: `GET/POST/PATCH /memories`,
-  `GET /memories/{id}/revisions`, `GET/POST /proposals` + `POST /proposals/{id}/decision`,
-  `GET/POST /inbox`, `GET /focus/preview`, `GET/POST /teams`, `GET/POST /tokens`,
-  `GET/POST /plugins`, admin-only `GET/POST/DELETE /users`.
-- **MCP surface (bearer API-token auth)** — for AI clients, and the path meant for
+  is specified in [docs/UI.md](UI.md). **Status:** in Phase 1 the web UI _is_ the human
+  interface (server-rendered routes under `/memory`, `/review`, `/focus`, `/data`,
+  `/settings`); a separate JSON REST API for people (`/api/memories`, `/api/tokens`, …) is
+  not built yet — scripts and backups use the `acm` CLI, and AI clients use MCP. When it
+  is added it will accept session auth only, never API tokens (see
+  [docs/SECURITY.md § What AI clients cannot do](SECURITY.md#what-ai-clients-cannot-do)).
+- **MCP surface (bearer API-token auth, `POST /mcp`)** — for AI clients, and the path meant for
   routine AI-driven writes: `memory.focus` (task-focused context pack — see
   [Task focus](#task-focus)), `memory.search`, `memory.get`, `memory.write`,
   `memory.sync` (bulk upsert from a repo's `memory/data/` after a dream pass),
   `memory.consolidate` (pull a work package of consolidation candidates, return
-  proposals), `inbox.add`. The hub stays deliberately "dumb" about models: it enforces
+  proposals — Phase 2), `inbox.add`. **Tool names are underscored on the wire**
+  (`memory_focus`, `memory_write`, `inbox_add`, …) because several MCP clients restrict
+  tool names to `[A-Za-z0-9_-]`; this document keeps the dotted form for readability. The hub stays deliberately "dumb" about models: it enforces
   access control and the confidence-tier mutation rule server-side, but the
   classification/merge _reasoning_ stays in the `dream` skill running client-side, in
   whatever AI tool is driving it. That keeps the hub free of any dependency on a
@@ -413,25 +423,30 @@ Three audiences, three ways in, one process, one set of access-control rules:
   See [Import / export](#import--export--offline-human-operated) below; this is also how
   a fresh instance is bootstrapped and how access is recovered.
 
-MCP clients can read, write, and propose; they cannot approve a proposal, mint tokens,
-or change instance settings. Those are human-only operations.
+MCP clients can read and write (within their token's scope), and in Phase 2 propose; they
+cannot approve a proposal, mint tokens, change instance settings, run import/export, mark a
+record `established`, change a record's tier, or write team-scope memory. Those are
+human-only operations, enforced server-side.
 
 ### Import / export — offline, human-operated
 
 Reviewing, exporting, and importing memory must work **without an AI and without the
 hub being reachable** — your memory is yours, and "I can read, back up, and move it
-myself" is the guarantee behind "own everything." Three equivalent ways in, all
-human-operated:
+myself" is the guarantee behind "own everything." Two ways in, both human-operated:
 
-1. **The web UI** — Import/Export page, plus per-record and per-filter export.
-2. **The REST API** — `GET /memories/export`, `POST /memories/import`, for scheduled
-   backups and scripting.
-3. **The `acm` CLI** — operates **directly on the SQLite file or on a plain-file
-   `memory/data/` directory**, with the server stopped, with no network, and with no
-   model: `acm export`, `acm import --dry-run`, `acm list`, `acm show`, `acm edit`,
-   `acm review` (proposals), plus bootstrap/recovery commands (`acm user create`,
-   `acm token create`, `acm doctor`). SQLite in WAL mode makes this safe to run even
-   alongside a live server.
+1. **The web UI** — the Data page (export download; import with a dry-run report you
+   must Apply), plus per-record review and editing under Memory.
+2. **The `acm` CLI** — operates **directly on the SQLite file or on a plain-file
+   directory**, with the server stopped, with no network, and with no model: `acm export`,
+   `acm import` (dry run unless `--apply`), `acm list`, `acm show`, `acm edit`, plus
+   bootstrap/recovery commands (`acm setup-code`, `acm user`, `acm token`, `acm doctor`,
+   `acm reindex`). `acm review` for proposals arrives with Phase 2. SQLite in WAL mode
+   makes this safe to run even alongside a live server. The test suite runs the CLI with
+   network connections blocked to keep that promise honest.
+
+Export and import are deliberately **not reachable with an API token** — an AI client
+can't dump or bulk-rewrite your memory (see
+[docs/SECURITY.md § What AI clients cannot do](SECURITY.md#what-ai-clients-cannot-do)).
 
 **Export format** is the same markdown + YAML frontmatter used everywhere in this repo,
 laid out as one directory (or `.zip`) per export:
@@ -446,10 +461,13 @@ export/
   _inbox/*.md            # optional: un-harvested inbox items
 ```
 
-Records are identified by their frontmatter `id`; a file without one is matched on
-(scope, owner, `name`). Import is **idempotent** (re-importing the same export is a
-no-op) and **dry-run by default** — it prints exactly what would be created, updated,
-and flagged before anything changes.
+Records are identified by their frontmatter `id` (kept when restoring into a fresh
+instance, so `links` between records survive a round trip); a file without one is matched on
+(scope, owner, `name`). A team-scope record also carries `team_id` (the team slug), like
+`project_id` for project scope. Import is **idempotent** (re-importing the same export is a
+no-op) and always shows a **dry-run report first** — the dry run executes for real inside a
+database savepoint and rolls back, so it reflects exactly what apply would do, permission and
+validation outcomes included. Import can only write where the importer could write by hand.
 
 **Humans are allowed to edit memory directly.** Earlier drafts framed hand-editing as
 something to avoid; that was wrong for a system whose point is that you stay in control.
@@ -458,9 +476,11 @@ revision with `change_source` of `ui`/`cli`/`import` and an author. The
 confidence-tier rule still applies, just with the human as the authority — changing an
 `established` record requires an explicit confirmation (a checkbox in the UI, `--confirm-established`
 in the CLI) so it's never accidental, and an import that conflicts with an existing
-record lands as a flagged revision for review rather than a blind overwrite. Export and
-import require project/team ownership or admin rights, per
-[docs/SECURITY.md](SECURITY.md); `user`-scope export is only ever of your own records.
+record is **parked** as a flagged, unapplied revision (shown on the record's page and in
+Review) rather than overwriting it. That happens when the hub copy is `established`, and also
+when the hub copy is _newer_ than the file — so restoring an old backup over a live instance
+can't silently clobber later edits. Export includes only records the exporter can read, so
+`user`-scope export is only ever of your own records.
 
 ### Web UI
 
@@ -554,17 +574,21 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
       queue, inbox, plugin model, web UI and offline import/export specified; schema
       templates extended
 
-**Phase 1 — usable hub, solo mode**
+**Phase 1 — usable hub, solo mode** (built: code in [`hub/`](../hub/README.md))
 
-- [ ] FastAPI + SQLModel + SQLite (WAL, FTS5) + Alembic skeleton; `/healthz`
-- [ ] Local auth and OIDC (both from the first release) and per-user scoped, expiring,
+- [x] FastAPI + SQLModel + SQLite (WAL, FTS5) + Alembic skeleton; `/healthz`
+- [x] Local auth and OIDC (both from the first release) and per-user scoped, expiring,
       hashed API tokens, per [docs/SECURITY.md](SECURITY.md) — no weaker interim scheme
-- [ ] MCP surface: `memory.focus` / `search` / `get` / `write` / `sync`, `inbox.add`,
+- [x] MCP surface: `memory.focus` / `search` / `get` / `write` / `sync`, `inbox.add`,
       with server-side confidence-tier enforcement and revisions
-- [ ] `acm` CLI: bootstrap, export, `import --dry-run`, list/show/edit — works offline
-- [ ] Web UI: Memories, Record detail + history, Import/Export, Tokens, Focus preview;
-      light/dark theme from day one
-- [ ] Container image + docker-compose per [docs/DEPLOYMENT.md](DEPLOYMENT.md)
+- [x] `acm` CLI: bootstrap, export, `import` (dry run by default), list/show/edit — works offline
+- [x] Web UI: Memory, Record detail + history, Review (inbox + import conflicts), Focus
+      preview, Data (import/export), Settings (tokens, theme, instance); light/dark theme
+- [x] Container image + docker-compose per [docs/DEPLOYMENT.md](DEPLOYMENT.md) (image
+      definition written; not built in the authoring environment — see DEPLOYMENT.md)
+- [ ] Session-authenticated JSON REST API for people (the UI and CLI cover every operation today)
+- [ ] Team/membership screens (the data model and access rules are in place and tested; there's
+      no UI to create teams or invite members yet — Phase 4)
 
 **Phase 2 — memory that learns**
 

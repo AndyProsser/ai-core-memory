@@ -1,7 +1,11 @@
 # Web UI
 
 The hub's human interface (see [ARCHITECTURE.md § Web UI](ARCHITECTURE.md#web-ui)).
-Same status as the rest of the hub design — decided, not yet implemented.
+**Status:** Phase 1 is built (Memory, Record detail with history, Review's inbox and import
+conflicts, Focus preview, Data, Settings, first-run setup, light/dark theme). Proposals,
+Teams & Users, and Plugins screens arrive with their phases. The code is in
+[`hub/src/acm_hub/web/`](../hub/src/acm_hub/web/); the screenshots-in-both-themes check used
+during development is described under Testing below.
 
 The UI exists for one reason: so a person can **see, correct, and move** what's
 remembered about them and their work, without needing an AI to do it. It is a window
@@ -88,9 +92,12 @@ why and, where it's a proposal-type action, offers to file a proposal instead.
 
 ### Review
 
-Two tabs, one queue mindset: **Proposals** and **Inbox**.
+One queue mindset, three sections: **Import conflicts**, **Inbox**, and **Proposals**.
 
-- **Proposals** — each card says what would change in one sentence ("Merge
+- **Import conflicts** _(built in Phase 1)_ — imports or syncs that would overwrite an
+  `established` or newer record are parked here; each opens the record to **Use this
+  version** or **Keep what's here**.
+- **Proposals** _(Phase 2; the section shows a placeholder until then)_ — each card says what would change in one sentence ("Merge
   `retry-policy` into `idempotent-retries`"), shows the diff, the rationale, who/what
   generated it (mechanical / dream skill / worker), and **Approve · Edit · Reject**.
   Batch-approve is offered only for `observed`-only proposals. Conflict cards (a new
@@ -205,7 +212,12 @@ badges (`CORE`, `confirmed`, `stale`), with color as reinforcement.
 
 ## Testing
 
-When built, the UI is covered by: server-rendered snapshot tests for each screen in both
-themes, an automated contrast check over the token table, keyboard-navigation tests
+Built and running today: integration tests that drive the real app (login, CSRF, every
+form, the sanitized-markdown rendering, theme persistence), and a test that fails if any
+template contains an inline style, script, or event handler (the CSP would silently drop
+them — that is how a real bug, a core-budget meter that rendered full-width, was caught).
+UI changes are also reviewed by screenshotting each screen in light, dark, and phone width.
+
+Still to add: an automated contrast check over the token table, keyboard-navigation tests
 (Playwright), and a "works with the network off" test that loads every screen with all
 external requests blocked.

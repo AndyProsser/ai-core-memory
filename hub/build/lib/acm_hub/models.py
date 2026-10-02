@@ -1,0 +1,185 @@
+"""Database tables. Mirrors the data model in docs/ARCHITECTURE.md § Data model."""
+
+from datetime import UTC, datetime
+from typing import Any
+
+from pydantic import NaiveDatetime
+from sqlalchemy import JSON, Column, Index, UniqueConstraint
+from sqlmodel import Field, SQLModel
+
+from .ids import new_id
+
+
+def utcnow() -> datetime:
+    """Naive UTC; SQLite has no timezone type, so everything is stored as UTC."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+class InstanceSettings(SQLModel, table=True):
+    __tablename__ = "instance_settings"
+    id: int = Field(default=1, primary_key=True)
+    instance_id: str = Field(default_factory=new_id)
+    deployment_mode: str = "solo"  # solo | team | multi_team
+    core_token_budget: int = 2000
+    default_token_expiry_days: int = 90
+    max_token_expiry_days: int = 365
+    local_login_enabled: bool = True
+    oidc_provisioning: str = "auto"  # auto | invite
+    setup_code_hash: str | None = None
+
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    email: str = Field(index=True, unique=True)
+    password_hash: str | None = None
+    auth_provider: str = "local"  # local | oidc
+    external_id: str | None = Field(default=None, index=True)  # "<issuer>|<sub>" for OIDC
+    is_admin: bool = False
+    theme_preference: str = "system"  # system | light | dark
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+
+
+class Team(SQLModel, table=True):
+    __tablename__ = "teams"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    name: str
+    slug: str = Field(index=True, unique=True)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+
+
+class TeamMember(SQLModel, table=True):
+    __tablename__ = "team_members"
+    team_id: str = Field(foreign_key="teams.id", primary_key=True)
+    user_id: str = Field(foreign_key="users.id", primary_key=True)
+    role: str = "member"  # owner | member
+
+
+class Project(SQLModel, table=True):
+    __tablename__ = "projects"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    slug: str = Field(index=True, unique=True)
+    team_id: str | None = Field(default=None, foreign_key="teams.id")
+    owner_user_id: str | None = Field(default=None, foreign_key="users.id")
+    visibility: str = "private"  # private | team | public
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+
+
+class ApiToken(SQLModel, table=True):
+    __tablename__ = "api_tokens"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
+    token_hash: str = Field(index=True, unique=True)  # SHA-256 hex; the raw token is never stored
+    prefix: str  # first characters of the token, for display only
+    label: str
+    project_ids: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )  # empty = all the user's projects
+    include_user_scope: bool = False  # may this token see/write the owner's personal (user-scope) memory?
+    access_level: str = "read_only"  # read_only | read_write
+    expires_at: NaiveDatetime | None = None
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    last_used_at: NaiveDatetime | None = None
+    revoked_at: NaiveDatetime | None = None
+
+
+class WebSession(SQLModel, table=True):
+    __tablename__ = "web_sessions"
+    id: str = Field(primary_key=True)  # SHA-256 of the cookie value
+    user_id: str = Field(foreign_key="users.id", index=True)
+    csrf_token: str
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    authenticated_at: NaiveDatetime = Field(default_factory=utcnow)  # last (re-)authentication
+    last_seen_at: NaiveDatetime = Field(default_factory=utcnow)
+    expires_at: NaiveDatetime
+
+
+class AuthFlow(SQLModel, table=True):
+    """In-flight OIDC authorization-code flow (state/nonce/PKCE), short-lived."""
+
+    __tablename__ = "auth_flows"
+    state_hash: str = Field(primary_key=True)
+    nonce: str
+    code_verifier: str
+    binding_hash: str  # hash of a cookie set in the initiating browser (login-CSRF defence)
+    reauth: bool = False
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+
+
+class MemoryRecord(SQLModel, table=True):
+    __tablename__ = "memory_records"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    scope: str  # project | team | user  (session scope never reaches the hub)
+    type: str  # user | feedback | project | reference | intent | rule
+    confidence: str = "observed"  # observed | confirmed | established
+    tier: str = "associated"  # core | associated
+    status: str = "active"  # active | superseded | stale | archived
+    name: str
+    description: str
+    body: str = ""
+    topics: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    project_id: str | None = Field(default=None, foreign_key="projects.id", index=True)
+    team_id: str | None = Field(default=None, foreign_key="teams.id", index=True)
+    user_id: str | None = Field(default=None, foreign_key="users.id", index=True)
+    valid_from: NaiveDatetime | None = None
+    valid_to: NaiveDatetime | None = None
+    last_reinforced: NaiveDatetime | None = None
+    reinforcement_count: int = 0
+    last_retrieved: NaiveDatetime | None = None
+    source: str = "dream-cycle"
+    source_trust: str = "internal"  # internal | external (plugin/unattributed content)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    updated_at: NaiveDatetime = Field(default_factory=utcnow)
+
+    __table_args__ = (Index("ix_memory_records_scope_status", "scope", "status"),)
+
+
+class MemoryLink(SQLModel, table=True):
+    __tablename__ = "memory_links"
+    from_id: str = Field(foreign_key="memory_records.id", primary_key=True)
+    to_id: str = Field(foreign_key="memory_records.id", primary_key=True)
+    kind: str = Field(default="related", primary_key=True)  # related | supersedes
+
+
+class MemoryRevision(SQLModel, table=True):
+    __tablename__ = "memory_revisions"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    memory_record_id: str = Field(foreign_key="memory_records.id", index=True)
+    # Snapshot of the record as of this revision (for an unapplied revision: the *incoming* content).
+    name: str
+    description: str
+    body: str
+    type: str
+    scope: str
+    confidence: str
+    tier: str
+    status: str
+    topics: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    changed_by_user_id: str | None = Field(default=None, foreign_key="users.id")
+    changed_by_token_id: str | None = Field(default=None, foreign_key="api_tokens.id")
+    changed_by_label: str | None = None  # e.g. OS username for CLI changes
+    changed_at: NaiveDatetime = Field(default_factory=utcnow)
+    change_note: str | None = None
+    change_source: str = "mcp-write"  # dream-cycle | mcp-write | import | ui | cli | plugin | mechanical
+    flagged: bool = False  # called out for human attention (confirmed-record change, import conflict, ...)
+    applied: bool = True  # False = a pending conflict awaiting a human decision
+
+
+class InboxItem(SQLModel, table=True):
+    __tablename__ = "inbox_items"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    owner_user_id: str = Field(foreign_key="users.id", index=True)
+    source: str  # mcp | ui | cli | plugin:<key>
+    scope: str = "user"
+    project_id: str | None = Field(default=None, foreign_key="projects.id")
+    title: str
+    body: str = ""
+    external_ref: str | None = None
+    captured_at: NaiveDatetime = Field(default_factory=utcnow)
+    status: str = "new"  # new | harvested | dismissed
+
+    __table_args__ = (UniqueConstraint("owner_user_id", "source", "external_ref", name="uq_inbox_external"),)
+
+
+# Re-exported for type checkers that dislike the Any in Column(JSON).
+JSONValue = Any

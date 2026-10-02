@@ -32,3 +32,4 @@ memory/data/session/
 # Memory hub local state
 hub/data/
 *.egg-info/
+!.env.example

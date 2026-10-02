@@ -8,7 +8,7 @@ from sqlmodel import col, select
 
 from ..access import AccessError, readable_project_ids
 from ..auth import mint_token, recently_authenticated
-from ..models import ApiToken, InstanceSettings, Project, utcnow
+from ..models import ApiToken, InstanceSettings, Project, WebSession, utcnow
 from ..records import ValidationFailed
 from ..security import check_password_policy, hash_password, verify_password
 from .deps import Ctx, notice_url, render, require_user, user_csrf
@@ -75,6 +75,11 @@ def set_password(
         return RedirectResponse(notice_url("/settings", problem), status_code=303)
     ctx.user.password_hash = hash_password(new)
     ctx.db.add(ctx.user)
+    # A password change should end every other login (a stolen session shouldn't survive it).
+    for ws in ctx.db.exec(
+        select(WebSession).where(WebSession.user_id == ctx.user.id, WebSession.id != ctx.ws.id)
+    ).all():
+        ctx.db.delete(ws)
     ctx.db.commit()
     return RedirectResponse(notice_url("/settings", "Password changed."), status_code=303)
 

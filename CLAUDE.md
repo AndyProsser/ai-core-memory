@@ -2,8 +2,9 @@
 
 `ai-core-memory` defines an open, cross-platform memory format and consolidation
 process for AI assistants (the "dream cycle" — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
-This repo is currently spec-and-skill stage, not a running service: most of the value is
-in the design docs and the `dream` skill, not in application code.
+This repo is spec-and-skill first, with a working Phase 1 hub in [`hub/`](hub/README.md)
+(FastAPI + SQLite + MCP + web UI + `acm` CLI). The design docs and the `dream` skill remain
+the source of truth; code in `hub/` implements them, it doesn't redefine them.
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing anything about the
 memory record schema or the scope model (session/project/team/user) — those two ideas
@@ -36,6 +37,7 @@ are load-bearing for everything else in the repo.
 | Adding...                                            | Goes in                                                                        |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------ |
 | A new Claude Skill                                   | `.claude/skills/<name>/SKILL.md`                                               |
+| Hub application code, tests, Dockerfile              | `hub/` (`src/acm_hub/`, `tests/`) — see `hub/README.md`                        |
 | A new memory type or scope                           | `docs/ARCHITECTURE.md` first, then a template in `memory/schema/`              |
 | A design/process change to the dream cycle           | `docs/ARCHITECTURE.md`                                                         |
 | Anything about running the memory hub                | `docs/DEPLOYMENT.md` (containers, k3s/k8s, backups)                            |
@@ -47,14 +49,14 @@ are load-bearing for everything else in the repo.
 
 ## Scope of changes
 
-Don't start implementing the memory hub service or other roadmap items (see
-ARCHITECTURE.md → Roadmap) unless explicitly asked. The hub's design — Python, FastAPI,
-SQLite/SQLModel, the data model, the user/team/token access model, and the security
-model in `docs/SECURITY.md` (token hardening, visibility/roles, local + OIDC auth) — is
-decided, but no code exists yet; treat "the design is decided" and "go build it" as two
-separate asks. This matters more for anything security-related than anywhere else in
-this repo: don't improvise a simplified auth/token scheme "for now" if asked to
-implement part of the hub — follow `docs/SECURITY.md` as written, or raise the
-discrepancy, rather than shipping something weaker. Prefer extending the plain-file
+Phase 1 of the hub is built (see ARCHITECTURE.md → Roadmap for what is and isn't). Don't
+start on later roadmap phases (proposal queue, plugins, teams UI, the Claude Code plugin)
+unless explicitly asked — "the design is decided" and "go build it" are separate asks. When
+working in `hub/`, run `pip install -e '.[dev]'` and `pytest` there; every change needs
+tests, and security-relevant behaviour (auth, tokens, access, import/export) needs a test
+that fails if the protection is removed. This matters more for anything security-related than anywhere else in
+this repo: don't improvise a simplified auth/token scheme "for now" — follow
+`docs/SECURITY.md` as written, or raise the discrepancy, rather than shipping something
+weaker. If the code and the docs disagree, fix the docs in the same change. Prefer extending the plain-file
 format, the schema templates, and the `dream` skill, since those are what's actually in
 use today.

@@ -6,11 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
+from acm_hub.access import principal_for_user
 from acm_hub.app import create_app
 from acm_hub.auth import mint_token
 from acm_hub.models import ApiToken, MemoryRecord, Project, User, utcnow
 from acm_hub.records import RecordIn, write_record
-from acm_hub.access import principal_for_user
 
 
 @pytest.fixture()

@@ -1,0 +1,531 @@
+"""`acm` — the offline, no-AI, no-network operator CLI.
+
+Works directly on the SQLite file (safe alongside a running hub: WAL mode). Records every change as
+a revision with change_source='cli' and the OS username. See docs/ARCHITECTURE.md § Import / export.
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import sys
+from pathlib import Path
+
+from sqlalchemy import text
+from sqlmodel import Session, col, select
+
+from . import __version__
+from .access import AccessError, NotFound, Principal, principal_for_user
+from .auth import has_admin, issue_setup_code, mint_token
+from .config import get_settings
+from .db import make_engine, migrate
+from .exportimport import (
+    export_files,
+    import_files,
+    new_export_name,
+    read_dir,
+    read_zip,
+    to_zip,
+    write_dir,
+)
+from .models import ApiToken, InstanceSettings, MemoryRecord, Project, User, utcnow
+from .records import (
+    Conflict,
+    RecordIn,
+    ValidationFailed,
+    get_record,
+    history,
+    list_records,
+    project_slug,
+    write_record,
+)
+from .security import check_password_policy, hash_password
+
+EMAIL_HINT = "set --as EMAIL (or ACM_USER) when the hub has more than one user"
+
+
+class CliError(Exception):
+    pass
+
+
+def _open() -> Session:
+    settings = get_settings()
+    engine = make_engine(settings)
+    migrate(engine)
+    s = Session(engine)
+    if s.get(InstanceSettings, 1) is None:
+        s.add(InstanceSettings(id=1))
+        s.commit()
+    return s
+
+
+def _actor(db: Session, email: str | None) -> Principal:
+    import os
+
+    email = email or os.environ.get("ACM_USER")
+    if email:
+        user = db.exec(select(User).where(User.email == email.strip().lower())).first()
+        if not user:
+            raise CliError(f"No user {email!r}. Create one with `acm user create`.")
+    else:
+        users = db.exec(select(User)).all()
+        if not users:
+            raise CliError("No users yet. Run `acm user create --admin you@example.com` first.")
+        if len(users) > 1:
+            raise CliError(f"More than one user: {EMAIL_HINT}.")
+        user = users[0]
+    return principal_for_user(db, user, kind="cli", label=getpass.getuser())
+
+
+def _password(args: argparse.Namespace) -> str:
+    if args.password_stdin:
+        pw = sys.stdin.readline().rstrip("\n")
+    else:
+        pw = getpass.getpass("Password: ")
+        if pw != getpass.getpass("Confirm: "):
+            raise CliError("The passwords don't match.")
+    if problem := check_password_policy(pw):
+        raise CliError(problem)
+    return pw
+
+
+# --- commands -------------------------------------------------------------------------------------------
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    _open().close()
+    print("Database is up to date.")
+    return 0
+
+
+def cmd_setup_code(args: argparse.Namespace) -> int:
+    with _open() as db:
+        if has_admin(db):
+            raise CliError(
+                "An admin already exists; first-run setup is closed. Use `acm user create --admin` to add another."
+            )
+        print(issue_setup_code(db))
+    return 0
+
+
+def cmd_user_create(args: argparse.Namespace) -> int:
+    email = args.email.strip().lower()
+    with _open() as db:
+        if db.exec(select(User).where(User.email == email)).first():
+            raise CliError(f"{email} already exists.")
+        if args.oidc:
+            user = User(
+                email=email, auth_provider="oidc", is_admin=args.admin
+            )  # invited: links on first verified SSO login
+        else:
+            user = User(email=email, password_hash=hash_password(_password(args)), is_admin=args.admin)
+        db.add(user)
+        db.commit()
+        print(
+            f"Created {'admin ' if args.admin else ''}user {email}"
+            + (" (invited via SSO)" if args.oidc else "")
+        )
+    return 0
+
+
+def cmd_user_list(args: argparse.Namespace) -> int:
+    with _open() as db:
+        for u in db.exec(select(User).order_by(col(User.created_at))).all():
+            kind = "admin" if u.is_admin else "member"
+            sso = "sso" if u.auth_provider == "oidc" else "local"
+            print(f"{u.email}\t{kind}\t{sso}\t{'linked' if u.external_id else ''}")
+    return 0
+
+
+def cmd_user_set_password(args: argparse.Namespace) -> int:
+    with _open() as db:
+        user = db.exec(select(User).where(User.email == args.email.strip().lower())).first()
+        if not user:
+            raise CliError("No such user.")
+        user.password_hash = hash_password(_password(args))
+        user.auth_provider = "local" if user.auth_provider == "local" else user.auth_provider
+        db.add(user)
+        db.commit()
+        print("Password updated.")
+    return 0
+
+
+def cmd_token_create(args: argparse.Namespace) -> int:
+    with _open() as db:
+        p = _actor(db, args.user)
+        user = db.get(User, p.user_id)
+        project_ids = []
+        for slug in args.project or []:
+            proj = db.exec(select(Project).where(Project.slug == slug)).first()
+            if not proj:
+                raise CliError(f"No project {slug!r}.")
+            project_ids.append(proj.id)
+        try:
+            raw, tok = mint_token(
+                db,
+                user,
+                label=args.label,
+                project_ids=project_ids,  # type: ignore[arg-type]
+                access_level="read_write" if args.read_write else "read_only",
+                expires_days=args.expires_days,
+                include_user_scope=args.include_user_scope,
+            )
+        except ValueError as e:
+            raise CliError(str(e)) from e
+        db.commit()
+        print(
+            f"Token for {user.email} ({tok.access_level}, expires {tok.expires_at:%Y-%m-%d}). Shown once — copy it now:\n\n{raw}\n"
+        )
+    return 0
+
+
+def cmd_token_list(args: argparse.Namespace) -> int:
+    with _open() as db:
+        p = _actor(db, args.user)
+        for t in db.exec(
+            select(ApiToken).where(ApiToken.user_id == p.user_id).order_by(col(ApiToken.created_at))
+        ).all():
+            state = (
+                "revoked"
+                if t.revoked_at
+                else ("expired" if t.expires_at and t.expires_at <= utcnow() else "active")
+            )
+            print(
+                f"{t.id}\t{t.prefix}…\t{t.label}\t{t.access_level}\t{state}\texpires {t.expires_at:%Y-%m-%d}"
+            )
+    return 0
+
+
+def cmd_token_revoke(args: argparse.Namespace) -> int:
+    with _open() as db:
+        tok = db.get(ApiToken, args.id)
+        if not tok:
+            raise CliError("No such token id (see `acm token list`).")
+        tok.revoked_at = tok.revoked_at or utcnow()
+        db.add(tok)
+        db.commit()
+        print("Revoked. It stops working immediately.")
+    return 0
+
+
+def _brief(db: Session, r: MemoryRecord) -> str:
+    where = project_slug(db, r) or r.scope
+    return f"{r.id}\t{'core' if r.tier == 'core' else 'assoc'}\t{r.type}\t{r.confidence}\t{r.status}\t{where}\t{r.name}"
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    with _open() as db:
+        p = _actor(db, args.user)
+        rows = list_records(
+            db,
+            p,
+            q=args.query,
+            scope=args.scope,
+            type=args.type,
+            tier=args.tier,
+            confidence=args.confidence,
+            status=None if args.status == "all" else args.status,
+            topic=args.topic,
+            project=args.project,
+        )
+        for r in rows:
+            print(_brief(db, r))
+        print(f"{len(rows)} record(s)", file=sys.stderr)
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    from .exportimport import render_record
+
+    with _open() as db:
+        p = _actor(db, args.user)
+        r = get_record(db, p, args.ref, project=args.project)
+        print(render_record(db, r))
+        if args.history:
+            for rev in history(db, p, r):
+                flag = " [flagged]" if rev.flagged else ""
+                pend = " [PENDING]" if not rev.applied else ""
+                print(
+                    f"# {rev.changed_at:%Y-%m-%d %H:%M} {rev.change_source}{flag}{pend} — {rev.change_note or ''}",
+                    file=sys.stderr,
+                )
+    return 0
+
+
+def cmd_edit(args: argparse.Namespace) -> int:
+    with _open() as db:
+        p = _actor(db, args.user)
+        r = get_record(db, p, args.ref, project=args.project)
+        body = None
+        if args.body_file:
+            body = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text()
+        data = RecordIn(
+            id=r.id,
+            description=args.description,
+            body=body,
+            tier=args.tier,
+            confidence=args.confidence,
+            status=args.status,
+            type=args.type,
+            topics=[t.strip() for t in args.topics.split(",")] if args.topics is not None else None,
+        )
+        res = write_record(
+            db, p, data, change_source="cli", note=args.note, confirm_established=args.confirm_established
+        )
+        db.commit()
+        print(f"{res.action}: {res.record.name}")
+        for n in res.notices:
+            print(f"note: {n}")
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    with _open() as db:
+        p = _actor(db, args.user)
+        files = export_files(
+            db,
+            p,
+            scope=args.scope,
+            project=args.project,
+            with_history=args.with_history,
+            with_inbox=args.with_inbox,
+        )
+        n = sum(
+            1
+            for f in files
+            if f.endswith(".md") and not f.endswith("MEMORY.md") and not f.startswith(("_history", "_inbox"))
+        )
+        if args.zip:
+            dest = Path(args.zip)
+            dest.write_bytes(to_zip(files))
+            dest.chmod(0o600)
+            print(f"Wrote {n} record(s) to {dest}")
+        else:
+            out = Path(args.out or new_export_name())
+            write_dir(files, out)
+            print(f"Wrote {n} record(s) to {out}/")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    if not path.exists():
+        raise CliError(f"{path} doesn't exist.")
+    files = (
+        read_dir(path)
+        if path.is_dir()
+        else (read_zip(path.read_bytes()) if path.suffix == ".zip" else {path.name: path.read_bytes()})
+    )
+    with _open() as db:
+        p = _actor(db, args.user)
+        report = import_files(db, p, files, apply=args.apply, change_source="cli")
+        for i in report.items:
+            print(f"{i.action:<9} {i.name}" + (f"  — {i.detail}" if i.detail else ""))
+        s = report.summary
+        print(
+            f"\n{s['create']} create · {s['update']} update · {s['unchanged']} unchanged · {s['conflict']} held for review · {s['error']} skipped"
+            + (f" · {s['inbox']} inbox" if s["inbox"] else "")
+        )
+        if args.apply:
+            db.commit()
+            print("Applied.")
+        else:
+            db.rollback()
+            print("Dry run — nothing changed. Re-run with --apply to import.")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    ok = True
+    settings = get_settings()
+    print(f"hub {__version__}; database {settings.db_path}")
+    with _open() as db:
+        row = db.execute(text("PRAGMA integrity_check")).scalar()
+        print(f"sqlite integrity: {row}")
+        ok &= row == "ok"
+        mode = db.execute(text("PRAGMA journal_mode")).scalar()
+        print(f"journal mode: {mode}")
+        n = db.execute(text("SELECT count(*) FROM memory_records")).scalar()
+        f = db.execute(text("SELECT count(*) FROM memory_fts")).scalar()
+        print(f"records: {n}; search index rows: {f}")
+        if n != f:
+            print("  ! search index is out of sync; run `acm reindex`")
+            ok = False
+        print(f"admin exists: {has_admin(db)}; users: {len(db.exec(select(User)).all())}")
+        mode_bits = settings.db_path.stat().st_mode & 0o077
+        if mode_bits:
+            print("  ! database file is accessible to other users (expected 0600)")
+            ok = False
+    print(
+        f"SSO: {'configured' if settings.oidc_enabled else 'not configured'}; public URL {settings.public_url}"
+    )
+    if settings.public_url.startswith("http://") and "localhost" not in settings.public_url:
+        print("  ! public URL is plain http; use HTTPS before exposing the hub beyond your LAN")
+    print("OK" if ok else "Problems found.")
+    return 0 if ok else 1
+
+
+def cmd_reindex(args: argparse.Namespace) -> int:
+    from .records import _fts_sync
+
+    with _open() as db:
+        db.execute(text("DELETE FROM memory_fts"))
+        rows = db.exec(select(MemoryRecord)).all()
+        for r in rows:
+            _fts_sync(db, r)
+        db.commit()
+        print(f"Reindexed {len(rows)} record(s).")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    uvicorn.run(
+        "acm_hub.app:create_app",
+        factory=True,
+        host=args.host,
+        port=args.port,
+        log_level="info",
+        proxy_headers=get_settings().trust_proxy,
+        forwarded_allow_ips="*" if get_settings().trust_proxy else None,
+    )
+    return 0
+
+
+# --- parser ---------------------------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="acm", description="Offline operator CLI for the memory hub (no network, no AI)."
+    )
+    ap.add_argument("--version", action="version", version=f"acm {__version__}")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def add(name: str, fn, help_: str, user: bool = True):  # noqa: ANN001, ANN202
+        p = sub.add_parser(name, help=help_)
+        p.set_defaults(fn=fn)
+        if user:
+            p.add_argument("--as", dest="user", metavar="EMAIL", help=f"act as this user ({EMAIL_HINT})")
+        return p
+
+    add("migrate", cmd_migrate, "create/upgrade the database schema", user=False)
+    add(
+        "setup-code",
+        cmd_setup_code,
+        "print a one-time code to claim first-run setup in the browser",
+        user=False,
+    )
+    add("doctor", cmd_doctor, "check database integrity, search index and configuration", user=False)
+    add("reindex", cmd_reindex, "rebuild the full-text search index", user=False)
+
+    u = sub.add_parser("user", help="manage users")
+    usub = u.add_subparsers(dest="ucmd", required=True)
+    c = usub.add_parser("create", help="create a user")
+    c.set_defaults(fn=cmd_user_create)
+    c.add_argument("email")
+    c.add_argument("--admin", action="store_true")
+    c.add_argument(
+        "--oidc",
+        action="store_true",
+        help="invite an SSO user (no local password); links on first verified SSO login",
+    )
+    c.add_argument(
+        "--password-stdin", action="store_true", help="read the password from stdin instead of prompting"
+    )
+    usub.add_parser("list", help="list users").set_defaults(fn=cmd_user_list)
+    sp = usub.add_parser("set-password", help="set or reset a local password")
+    sp.set_defaults(fn=cmd_user_set_password)
+    sp.add_argument("email")
+    sp.add_argument("--password-stdin", action="store_true")
+
+    t = sub.add_parser("token", help="manage API tokens")
+    tsub = t.add_subparsers(dest="tcmd", required=True)
+    tc = tsub.add_parser("create", help="mint an API token (shown once)")
+    tc.set_defaults(fn=cmd_token_create)
+    tc.add_argument("--as", dest="user", metavar="EMAIL")
+    tc.add_argument("--label", required=True)
+    tc.add_argument(
+        "--project",
+        action="append",
+        help="limit to this project slug (repeatable); default all the user's projects",
+    )
+    tc.add_argument("--read-write", action="store_true", help="default is read-only")
+    tc.add_argument("--expires-days", type=int, default=None)
+    tc.add_argument(
+        "--include-user-scope",
+        action="store_true",
+        help="allow the token to read/write personal (user-scope) memory",
+    )
+    tl = tsub.add_parser("list", help="list your tokens")
+    tl.set_defaults(fn=cmd_token_list)
+    tl.add_argument("--as", dest="user", metavar="EMAIL")
+    tr = tsub.add_parser("revoke", help="revoke a token by id")
+    tr.set_defaults(fn=cmd_token_revoke)
+    tr.add_argument("id")
+
+    ls = add("list", cmd_list, "list records")
+    ls.add_argument("-q", "--query")
+    for f in ("scope", "type", "tier", "confidence", "topic", "project"):
+        ls.add_argument(f"--{f}")
+    ls.add_argument(
+        "--status", default="active", help="active (default), stale, superseded, archived, or all"
+    )
+
+    sh = add("show", cmd_show, "print one record (by id or name)")
+    sh.add_argument("ref")
+    sh.add_argument("--project")
+    sh.add_argument("--history", action="store_true", help="also list revisions (to stderr)")
+
+    ed = add("edit", cmd_edit, "change a record")
+    ed.add_argument("ref")
+    ed.add_argument("--project")
+    ed.add_argument("--description")
+    ed.add_argument("--body-file", help="file with the new body ('-' for stdin)")
+    ed.add_argument("--type")
+    ed.add_argument("--tier", choices=["core", "associated"])
+    ed.add_argument("--confidence", choices=["observed", "confirmed", "established"])
+    ed.add_argument("--status", choices=["active", "superseded", "stale", "archived"])
+    ed.add_argument("--topics", help="comma-separated; replaces the existing topics")
+    ed.add_argument("--note", help="revision note")
+    ed.add_argument(
+        "--confirm-established", action="store_true", help="required to change an established record"
+    )
+
+    ex = add("export", cmd_export, "export records as markdown (+ manifest)")
+    ex.add_argument("--out", help="output directory (default: ./acm-export-<timestamp>)")
+    ex.add_argument("--zip", metavar="FILE", help="write a .zip instead of a directory")
+    ex.add_argument("--scope")
+    ex.add_argument("--project")
+    ex.add_argument("--with-history", action="store_true")
+    ex.add_argument("--with-inbox", action="store_true")
+
+    im = add("import", cmd_import, "import an export directory/zip or a record .md (dry run unless --apply)")
+    im.add_argument("path")
+    im.add_argument("--apply", action="store_true", help="actually write; default is a dry run")
+
+    sv = add("serve", cmd_serve, "run the hub (web UI, REST, MCP)", user=False)
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8000)
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.fn(args)
+    except CliError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except (ValidationFailed, AccessError, NotFound) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except Conflict as e:
+        hint = " (re-run with --confirm-established)" if e.needs_confirmation else ""
+        print(f"conflict: {e}{hint}", file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

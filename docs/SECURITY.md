@@ -27,6 +27,10 @@ breach. Every point below exists for that one reason.
   project ID(s) — defaulting to the one project it was created for, not "everything the
   user can see" — and an access level (`read_only` or `read_write`). A token that leaks
   out of one project's CI pipeline shouldn't expose every project its creator has access to.
+  **Personal (`user`-scope) memory is a separate, explicit grant** (`include_user_scope`,
+  off by default): a CI token has no business reading how its owner likes to work, and a
+  token without the grant can neither read nor write user scope. Team scope reaches a
+  project-limited token only for teams that own one of its projects, and is read-only for it.
 - **Expiring by default.** Tokens carry an expiry (a sensible instance-level default —
   90 days is reasonable — configurable per token up to an instance maximum). "Forever"
   is exactly how a token from two years ago becomes the thing that leaks quietly.
@@ -35,7 +39,11 @@ breach. Every point below exists for that one reason.
 - **Never logged, never in a URL.** Always `Authorization: Bearer <token>`; redacted
   from access and error logs; rejected outright over plaintext HTTP except from
   localhost or an RFC1918 address (self-hosted instances still need to work on a LAN
-  without forcing a TLS setup just to try it out).
+  without forcing a TLS setup just to try it out). "Private" is an explicit list —
+  loopback, `10/8`, `172.16/12`, `192.168/16`, link-local, IPv6 ULA — not Python's broader
+  `is_private`, which also covers documentation and other reserved ranges. Behind a TLS-terminating
+  reverse proxy, set `MEMORY_HUB_TRUST_PROXY=true` so `X-Forwarded-Proto` is honoured (off by
+  default: those headers are spoofable by anyone who can reach the hub directly).
 - **Owned by a user, minted by a person.** A token acts as the user who created it,
   never with more access than that user has, and can only be created from a logged-in web
   session or the host CLI (never by another token). Each token is created with a label,
@@ -162,8 +170,11 @@ The web UI authenticates with a server-side session, not an API token:
 - **CSRF protection** on every state-changing request (synchronizer token via HTMX
   headers); the UI never accepts API tokens, and the API never accepts session cookies
   for MCP/REST token routes — the two credential types can't be confused.
-- Strict `Content-Security-Policy` (no inline scripts except a single nonce'd theme
-  bootstrap), no third-party origins — the UI loads nothing from a CDN.
+- Strict `Content-Security-Policy` — `script-src 'self'; style-src 'self'; default-src 'none'` —
+  with **no inline scripts, styles, or event handlers at all** (a test fails the build if one
+  appears in a template). The no-flash theme bootstrap is a same-origin _blocking_ script in
+  `<head>`, not an inline one, so no nonce machinery is needed. No third-party origins: the UI
+  loads nothing from a CDN (htmx is vendored).
 - Login throttling per account and per IP; password-change and token-mint actions
   re-prompt for the password (local accounts) or recent OIDC re-authentication.
 - Record bodies are untrusted markdown: rendered through a sanitizing renderer (no raw
@@ -177,7 +188,12 @@ of the security model, not just convenience:
 
 - A token can read, write, and _propose_ within its scope. It **cannot** approve or
   reject a proposal, mint or revoke tokens, change instance settings, manage users or
-  teams, install/configure plugins, or run import/export. Those are human-session-only
+  teams, install/configure plugins, or run import/export. Concretely, as enforced in the
+  record service: it can't set a record `established`, can't change a record's tier
+  (core promotion is human-gated), can't write `team` scope, can't change a record's scope,
+  and can't change an `established` record at all (it gets a conflict to surface to the user).
+  `memory_sync` from a token that collides with an `established` or newer record parks the
+  incoming version as a flagged, unapplied revision for a person to resolve. Those are human-session-only
   operations. A compromised token can therefore at worst add `observed` records and
   proposals within its scope — and every one of them is attributed to the token and
   reviewable.
@@ -239,3 +255,19 @@ to the wrong Slack channel can't be un-posted.
 - **Auditable.** Every delivery and every inbound pull is recorded (`plugin_deliveries`,
   `change_source = 'plugin'` on any resulting revision) and visible in the Plugins screen.
 
+## Phase 1 implementation notes
+
+What is built, and the limits of it, stated plainly:
+
+- Login throttling and the per-token rate limit are **in-process** (the hub is a single
+  process by design). They reset on restart and wouldn't be shared across replicas — fine
+  for self-hosting, something to move to the database before any multi-replica deployment.
+- The first-run setup code is written to the server log and stored only as a hash; whoever
+  can read the log or run `acm setup-code` can claim setup. That's the same trust boundary as
+  filesystem access (see CLI access above) and closes permanently once an admin exists.
+- There is no email, so there is no emailed password reset: a locked-out local admin
+  recovers with `acm user set-password` on the host. OIDC users recover through their IdP.
+- Records and the database are not encrypted at rest (see Roles above for the
+  roadmap idea). The DB file and its directory are created `0600`/`0700`.
+- Tokens and sessions are looked up by the SHA-256 of a 256-bit random value; there's no
+  per-secret salt because there's nothing low-entropy to protect. Passwords use Argon2id.

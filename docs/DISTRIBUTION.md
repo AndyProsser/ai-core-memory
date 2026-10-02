@@ -82,8 +82,13 @@ from the working skill, would be worse than not publishing one yet.
 
 ### MCP: how the hub gets connected
 
-Two ways, once the hub exists and is reachable over HTTP (see
-[ARCHITECTURE.md § Memory hub](ARCHITECTURE.md#memory-hub-cross-project-store)):
+The hub exists now (Phase 1) and serves MCP over streamable HTTP at `POST <hub-url>/mcp`
+with a per-user API token as the bearer credential (see
+[ARCHITECTURE.md § Memory hub](ARCHITECTURE.md#memory-hub-cross-project-store)). Create a
+token in the hub's **Settings → API tokens** (or `acm token create`); the UI hands back a
+ready-to-paste command and `.mcp.json` snippet when it's created. Tokens are scoped to
+chosen projects, read-only by default, expire (90 days by default), and are only accepted
+over HTTPS — or plain HTTP on localhost / a private LAN. Two ways to connect:
 
 - **Manual** — `claude mcp add --transport http memory-hub https://your-hub/mcp --header
   "Authorization: Bearer $TOKEN"`, or the equivalent committed to a project's `.mcp.json`
@@ -93,10 +98,15 @@ Two ways, once the hub exists and is reachable over HTTP (see
   `${MEMORY_HUB_TOKEN}`) so installing the plugin both gives you the skill and prompts
   you to point it at your own hub.
 
-This repo doesn't ship an `.mcp.json` yet — there's no hub for it to point at. An MCP
-entry for a server that doesn't exist is worse than no entry; it gets added, in both
-places above, together with the hub itself (see
-[ARCHITECTURE.md § Roadmap](ARCHITECTURE.md#roadmap)).
+This repo still doesn't ship an `.mcp.json`: the URL is specific to _your_ hub, so a
+committed entry would point somewhere meaningless for everyone else. Put one in the projects
+that should use your hub, with the token in `${MEMORY_HUB_TOKEN}`, never in the file. The
+plugin bundle (Phase 4, below) is where a shipped entry belongs.
+
+The tools the hub exposes are `memory_focus`, `memory_search`, `memory_get`,
+`memory_write`, `memory_sync`, and `inbox_add`; the server's built-in instructions tell a
+connected assistant how to use them (focus at the start of a task, write narrowly, never claim
+`established`).
 
 ## Claude.ai (the web app)
 
