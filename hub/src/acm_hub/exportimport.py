@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 import yaml
 from sqlmodel import Session, col, select
 
-from . import __version__
+from . import __version__, proposals
 from .access import AccessError, NotFound, Principal, can_read, visible_clause
 from .ids import is_id
 from .models import (
@@ -35,7 +35,6 @@ from .records import (
     ValidationFailed,
     _find_existing,
     project_slug,
-    record_conflict,
     team_slug,
     write_record,
 )
@@ -442,7 +441,7 @@ def _import_one(
             if existing.confidence == "established"
             else "the hub copy is newer than the import"
         )
-        record_conflict(session, p, existing, d, source=change_source, note=f"import conflict: {why}")
+        proposals.park_conflict(session, p, existing, d, source=change_source, note=f"import conflict: {why}")
         return "conflict", f"not applied — {why}; review it on the record's page", existing
     d2 = d.model_copy(update={"id": existing.id, "scope": None, "project": None, "team": None})
     res = write_record(session, p, d2, change_source=change_source, note="imported update")

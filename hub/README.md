@@ -13,12 +13,12 @@ One Python process, one SQLite file. No external services.
 | --- | --- |
 | Records, tiers (core/associated), confidence-tier enforcement, revisions | built |
 | Task focus (`memory_focus`): core + FTS5 + topics + links, budget-packed, explainable | built |
-| MCP: `memory_focus` `memory_search` `memory_get` `memory_write` `memory_sync` `inbox_add` | built |
+| MCP: `memory_focus` `memory_search` `memory_get` `memory_write` `memory_sync` `memory_reinforce` `memory_propose` `memory_consolidate` `inbox_add` `inbox_resolve` | built |
 | Local login (Argon2id) + OIDC SSO (PKCE) | built |
 | API tokens: hashed, scoped, expiring, revocable, rate-limited, HTTPS-or-LAN | built |
 | Web UI: Memory, Review (inbox + import conflicts), Focus, Data, Settings; light/dark | built |
-| `acm` CLI: setup, users, tokens, list/show/edit, export, import, doctor, reindex | built |
-| Lifecycle (reinforce / supersede / decay), proposal queue, `memory_consolidate` | Phase 2 |
+| `acm` CLI: setup, users, tokens, list/show/edit, export, import, consolidate, review, doctor, reindex | built |
+| Lifecycle: reinforcement, supersession + timeline, decay; proposal queue + Review screen; `acm consolidate` / `acm review`; scheduler | built (Phase 2) |
 | Plugins (Obsidian, Memos, Slack/Teams via Apprise) | Phase 3 |
 | Teams/members UI, Claude Code plugin | Phase 4 |
 
@@ -53,6 +53,8 @@ acm show idempotent-retries --history
 acm edit idempotent-retries --tier core --confirm-established
 acm export --out ./backup --with-history
 acm import ./backup               # dry run; add --apply to write
+acm consolidate --dry-run         # what would decay / look duplicated / exceed the core budget
+acm review                        # the proposal queue; `acm review approve ID [--confirm-established]`
 acm doctor
 ```
 

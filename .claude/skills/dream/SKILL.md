@@ -13,6 +13,35 @@ and leave a clean index behind. Full design: [docs/ARCHITECTURE.md](../../../doc
 Run this on request, not automatically — memory changes are visible to every future
 session that reads them, so a human should be able to see what got written.
 
+## Two ways to run it
+
+**Plain files (always works).** Follow the pipeline below against `memory/data/`. Nothing else is needed.
+
+**With a memory hub connected over MCP** (tools named `memory_*` / `inbox_*` are available). The hub already
+did the mechanical half — decay, duplicate candidates, core-budget checks — so don't redo it by hand:
+
+1. Call `memory_consolidate` (pass `project` if you know it). It returns the open work: inbox items to
+   classify, duplicate candidates with both texts, records near their staleness limit, the core set and
+   its budget, and proposals already pending (don't re-propose those).
+2. Harvest this session as usual, then act **through the tools**, never by assuming:
+   - New fact → `memory_write` (narrowest scope, `observed` unless the user stated it; always pass a
+     `source_ref` that identifies this session so a later session re-establishing it counts as reinforcement).
+   - A fact you used that still holds → `memory_reinforce(id, source_ref)`. Two independent sessions
+     promote `observed` → `confirmed` on their own; never claim `established`.
+   - Something replaced → `memory_write` the new record with `supersedes=[old_id]`. Don't edit history away.
+   - A true duplicate → `memory_propose(kind="merge", payload={keep, retire, merged:{description, body}})` with the
+     best merged text. Related but distinct → write each with `links`.
+   - Promotion (project → user/team), core promotion/demotion, marking stale, archiving →
+     `memory_propose(...)` with a one-sentence rationale. **You propose; a person approves in the hub.**
+   - Inbox items → write a record from it then `inbox_resolve(item_id, "harvested", record_id)`, or `inbox_resolve(item_id, "dismissed")`.
+3. If `memory_write` returns a CONFLICT with an established record, the user's version is untouched and yours
+   was filed for their review. Tell them in your summary; don't try to work around it.
+4. In your closing summary, list what you wrote, reinforced, superseded, and **proposed** (the user must go
+   approve those), plus any conflicts.
+
+The rules below (classify, merge, flag conflicts, promote, prune) apply either way; the hub just enforces
+them server-side and removes the busywork.
+
 ## Pipeline
 
 ### 1. Harvest
@@ -68,7 +97,7 @@ Skip anything covered under "What NOT to remember" in ARCHITECTURE.md — code s
 git-derivable history, bug-fix mechanics, anything already in `CLAUDE.md`, in-progress
 task state.
 
-### 3. Merge / dedupe
+### 3. Merge / dedupe  _(hub: `memory_reinforce`, `memory_propose`)_
 
 For each classified fragment, check `memory/data/<scope>/` for an existing record
 covering the same thing:
@@ -103,7 +132,7 @@ record's confidence tier before touching it:
 
 A wrong memory that's confidently stated is worse than a gap.
 
-### 5. Promote (human-gated)
+### 5. Promote (human-gated)  _(hub: `memory_propose` kind `promote_scope` / `promote_core`)_
 
 If something classified as `project` scope looks like it actually generalizes — a
 working-style fact about the user, a convention the whole team follows, not just this

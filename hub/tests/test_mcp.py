@@ -78,6 +78,10 @@ def test_requires_a_valid_token(env):
         "memory_write",
         "memory_sync",
         "inbox_add",
+        "inbox_resolve",
+        "memory_reinforce",
+        "memory_propose",
+        "memory_consolidate",
     }
     # a web-session cookie is not an API credential
     assert (
@@ -313,3 +317,224 @@ def test_inbox_add(env):
     raw, _ = token(app, uid)
     err, out = call(client, raw, "inbox_add", title="Try the thing", body="notes")
     assert not err and out["status"] == "new"
+
+
+# --- Phase 2: learning tools -----------------------------------------------------------------------------
+
+
+def test_reinforce_via_mcp_confirms_after_two_independent_sessions(env):
+    client, app, uid = env
+    raw, _ = token(app, uid)
+    call(
+        client,
+        raw,
+        "memory_write",
+        name="use-uv",
+        description="Use uv for Python envs",
+        type="feedback",
+        scope="project",
+        project="tools",
+        body="Create environments with uv.",
+        source_ref="session-0",
+    )
+    err, out = call(client, raw, "memory_reinforce", id_or_name="use-uv", source_ref="session-0")
+    assert not err and out["counted"] is False  # the session that wrote it can't vouch for it
+    err, out = call(client, raw, "memory_reinforce", id_or_name="use-uv", source_ref="session-1")
+    assert out["counted"] and out["confidence"] == "observed"
+    err, out = call(client, raw, "memory_reinforce", id_or_name="use-uv", source_ref="session-2")
+    assert out["promoted_to_confirmed"] and out["confidence"] == "confirmed"
+    err, again = call(
+        client,
+        raw,
+        "memory_write",
+        name="use-uv",
+        description="Use uv for Python envs",
+        type="feedback",
+        scope="project",
+        project="tools",
+        body="Create environments with uv.",
+        source_ref="session-3",
+    )
+    assert again["action"] == "reinforced" and again["reinforcement_count"] == 3
+
+
+def test_supersede_via_mcp_keeps_history(env):
+    client, app, uid = env
+    raw, _ = token(app, uid)
+    _, old = call(
+        client,
+        raw,
+        "memory_write",
+        name="use-pip",
+        description="Use pip",
+        type="feedback",
+        scope="project",
+        project="tools",
+        body="pip install",
+    )
+    err, new = call(
+        client,
+        raw,
+        "memory_write",
+        name="use-uv",
+        description="Use uv",
+        type="feedback",
+        scope="project",
+        project="tools",
+        body="uv sync",
+        supersedes=[old["id"]],
+    )
+    assert not err
+    err, got = call(client, raw, "memory_get", id_or_name=old["id"])
+    assert got["status"] == "superseded" and [h["name"] for h in got["history"]] == ["use-uv"]
+    err, hits = call(client, raw, "memory_search", query="pip", project="tools")
+    assert hits["results"] == []  # default search is active-only
+    err, hits = call(client, raw, "memory_search", query="pip", project="tools", status="superseded")
+    assert [h["name"] for h in hits["results"]] == ["use-pip"]
+
+
+def test_established_conflict_is_filed_for_the_user_not_lost(env):
+    client, app, uid = env
+    raw, _ = token(app, uid)
+    with Session(app.state.engine) as s:
+        write_record(
+            s,
+            principal_for_user(s, s.get(User, uid)),
+            RecordIn(
+                name="never-merge-red",
+                description="d",
+                body="v1",
+                type="rule",
+                scope="project",
+                project="payments",
+                confidence="established",
+            ),
+            change_source="ui",
+        )
+        s.commit()
+    err, out = call(
+        client,
+        raw,
+        "memory_write",
+        name="never-merge-red",
+        description="d",
+        body="v2",
+        type="rule",
+        scope="project",
+        project="payments",
+    )
+    assert err and "filed for the user" in out and "CONFLICT" in out
+    err, out2 = call(
+        client,
+        raw,
+        "memory_write",
+        name="never-merge-red",
+        description="d",
+        body="v2",
+        type="rule",
+        scope="project",
+        project="payments",
+    )
+    assert err
+    from acm_hub.models import Proposal
+
+    with Session(app.state.engine) as s:
+        props = s.exec(select(Proposal)).all()
+        assert (
+            len(props) == 1 and props[0].kind == "conflict" and props[0].status == "pending"
+        )  # the retry reused it
+        assert s.exec(select(MemoryRecord)).one().body == "v1"
+
+
+def test_propose_and_consolidate_via_mcp(env):
+    client, app, uid = env
+    raw, _ = token(app, uid)
+    body = "Always send an idempotency key on webhook retries to avoid double charges."
+    _, a = call(
+        client,
+        raw,
+        "memory_write",
+        name="idem-one",
+        description="Webhook retries need idempotency keys",
+        type="project",
+        scope="project",
+        project="payments",
+        body=body,
+    )
+    _, b = call(
+        client,
+        raw,
+        "memory_write",
+        name="idem-two",
+        description="Webhook retries need idempotency keys",
+        type="project",
+        scope="project",
+        project="payments",
+        body=body,
+    )
+    call(client, raw, "inbox_add", title="Idea: add a retry dashboard", body="grafana")
+    err, wp = call(client, raw, "memory_consolidate", project="payments")
+    assert (
+        not err
+        and len(wp["duplicate_candidates"]) == 1
+        and wp["inbox"][0]["title"] == "Idea: add a retry dashboard"
+    )
+    assert "inbox_resolve" in wp["instructions"]
+    err, prop = call(
+        client,
+        raw,
+        "memory_propose",
+        kind="merge",
+        payload={"keep": a["id"], "retire": b["id"], "merged": {"body": body + " Check the dedupe table."}},
+        rationale="Same fact written twice.",
+    )
+    assert not err and prop["status"] == "pending" and "idem-two into idem-one" in prop["summary"]
+    err, same = call(
+        client,
+        raw,
+        "memory_propose",
+        kind="merge",
+        payload={"keep": a["id"], "retire": b["id"]},
+        rationale="again",
+    )
+    assert same["proposal_id"] == prop["proposal_id"]  # not duplicated
+    err, wp2 = call(client, raw, "memory_consolidate")
+    assert [x["id"] for x in wp2["pending_proposals"]] == [prop["proposal_id"]]
+    # the AI cannot apply it: nothing changed, and there's no tool to approve
+    err, got = call(client, raw, "memory_get", id_or_name="idem-two", project="payments")
+    assert got["status"] == "active"
+    err, out = call(
+        client, raw, "memory_propose", kind="review_established", payload={"record": a["id"]}, rationale="x"
+    )
+    assert err
+    err, out = call(
+        client,
+        raw,
+        "memory_propose",
+        kind="promote_core",
+        payload={"record": a["id"]},
+        rationale="make it core",
+    )
+    assert not err and out["status"] == "pending"  # may be *proposed*; only a person can do it
+
+
+def test_inbox_resolve_only_touches_your_own_items(env):
+    client, app, uid = env
+    raw, _ = token(app, uid)
+    _, item = call(client, raw, "inbox_add", title="mine")
+    err, out = call(client, raw, "inbox_resolve", item_id=item["id"], action="harvested")
+    assert not err and out["status"] == "harvested"
+    err, _ = call(client, raw, "inbox_resolve", item_id=item["id"], action="deleted")
+    assert err
+    with Session(app.state.engine) as s:
+        other = User(email="other@example.com")
+        s.add(other)
+        s.commit()
+        from acm_hub.models import InboxItem
+
+        theirs = InboxItem(owner_user_id=other.id, source="ui", title="theirs")
+        s.add(theirs)
+        s.commit()
+        tid = theirs.id
+    err, out = call(client, raw, "inbox_resolve", item_id=tid, action="dismissed")
+    assert err and "No such inbox item" in out

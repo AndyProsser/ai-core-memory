@@ -18,6 +18,7 @@ from sqlmodel import Session, func, select
 from ..access import AccessError, NotFound, Principal, principal_for_user
 from ..auth import SESSION_COOKIE, cookie_should_be_secure, csrf_ok, has_admin, lookup_web_session
 from ..models import InboxItem, InstanceSettings, User, WebSession
+from ..proposals import pending_count
 from ..records import Conflict, ValidationFailed
 
 WEB_DIR = Path(__file__).parent
@@ -127,6 +128,7 @@ def render(request: Request, name: str, ctx: Ctx | None = None, *, status: int =
                 .select_from(InboxItem)
                 .where(InboxItem.owner_user_id == ctx.user.id, InboxItem.status == "new")
             ).one(),
+            "proposal_count": pending_count(ctx.db, ctx.principal),
             "deployment_mode": inst.deployment_mode if inst else "solo",
         }
     base.update(kw)

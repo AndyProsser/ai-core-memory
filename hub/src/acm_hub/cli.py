@@ -15,9 +15,11 @@ from sqlalchemy import text
 from sqlmodel import Session, col, select
 
 from . import __version__
+from . import proposals as proposals_mod
 from .access import AccessError, NotFound, Principal, principal_for_user
 from .auth import has_admin, issue_setup_code, mint_token
 from .config import get_settings
+from .consolidate import run_consolidation
 from .db import make_engine, migrate
 from .exportimport import (
     export_files,
@@ -378,6 +380,76 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_consolidate(args: argparse.Namespace) -> int:
+    """The mechanical pass: decay, duplicate candidates, core budget, review reminders. Instance-wide unless --as."""
+    with _open() as db:
+        scope_to = _actor(db, args.user) if args.user else None
+        rep = run_consolidation(db, scope_to=scope_to, dry_run=args.dry_run)
+        if not args.dry_run:
+            db.commit()
+        d = rep.as_dict()
+        print(f"{'Would scan' if args.dry_run else 'Scanned'} {d['scanned']} active record(s).")
+        print(f"  marked stale automatically (observed, unreinforced): {d['auto_staled']}")
+        print(
+            f"  new proposals: {d['proposed'] or 'none'}   auto-applied: {d['auto_applied']}   closed as out of date: {d['expired']}   suppressed (recently rejected): {d['suppressed']}"
+        )
+        if args.dry_run:
+            print("Dry run — nothing changed.")
+        elif d["proposed"]:
+            print("Review them with `acm review`.")
+    return 0
+
+
+def _print_proposal(db: Session, prop, *, detail: bool = False) -> None:  # noqa: ANN001
+    v = proposals_mod.view(db, prop)
+    flag = " [needs --confirm-established]" if v.needs_confirm else ""
+    stale = f" [OUT OF DATE: {v.stale_reason}]" if v.stale_reason else ""
+    print(f"{prop.id}\t{prop.kind}\t{prop.generated_by}\t{v.summary}{flag}{stale}")
+    if detail:
+        print(f"  why: {prop.rationale}")
+        for r in v.records.values():
+            print(f"  - {r.name} ({r.confidence}, {r.tier}, {r.status}): {r.description}")
+        if v.incoming is not None:
+            print("  incoming version:\n    " + v.incoming.body.replace("\n", "\n    "))
+        merged = prop.payload.get("merged")
+        if merged:
+            print(
+                "  proposed merged text:\n    "
+                + (merged.get("body") or merged.get("description") or "").replace("\n", "\n    ")
+            )
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    with _open() as db:
+        p = _actor(db, args.user)
+        sub = args.rcmd or "list"
+        if sub == "list":
+            rows = proposals_mod.list_proposals(db, p, status=None if args.all else "pending")
+            for prop in rows:
+                _print_proposal(db, prop)
+            print(f"{len(rows)} proposal(s)" + ("" if args.all else " pending"), file=sys.stderr)
+            return 0
+        prop = proposals_mod.get_proposal(db, p, args.id)
+        if sub == "show":
+            _print_proposal(db, prop, detail=True)
+            return 0
+        try:
+            proposals_mod.decide(
+                db,
+                p,
+                args.id,
+                approve=sub == "approve",
+                note=args.note,
+                confirm_established=getattr(args, "confirm_established", False),
+            )
+        except proposals_mod.ProposalExpired as e:
+            db.commit()  # keep the "expired" closure
+            raise CliError(str(e)) from e
+        db.commit()
+        print(("Approved and applied." if sub == "approve" else "Rejected.") + f" ({prop.kind})")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -504,6 +576,34 @@ def build_parser() -> argparse.ArgumentParser:
     im = add("import", cmd_import, "import an export directory/zip or a record .md (dry run unless --apply)")
     im.add_argument("path")
     im.add_argument("--apply", action="store_true", help="actually write; default is a dry run")
+
+    co = add(
+        "consolidate",
+        cmd_consolidate,
+        "run the mechanical consolidation pass now (decay, duplicates, core budget)",
+    )
+    co.add_argument(
+        "--dry-run", action="store_true", help="report what would happen without changing anything"
+    )
+
+    rv = sub.add_parser("review", help="review and decide consolidation proposals (no AI involved)")
+    rv.set_defaults(fn=cmd_review, rcmd=None, all=False)
+    rv.add_argument("--as", dest="user", metavar="EMAIL")
+    rv.add_argument("--all", action="store_true", help="include decided/expired proposals")
+    rsub = rv.add_subparsers(dest="rcmd")
+    rl = rsub.add_parser("list", help="list pending proposals (default)")
+    rl.add_argument("--all", action="store_true")
+    rs = rsub.add_parser("show", help="show a proposal in full")
+    rs.add_argument("id")
+    ra = rsub.add_parser("approve", help="approve and apply a proposal")
+    ra.add_argument("id")
+    ra.add_argument("--note")
+    ra.add_argument(
+        "--confirm-established", action="store_true", help="required when it touches an established record"
+    )
+    rj = rsub.add_parser("reject", help="reject a proposal (it won't be re-raised for 30 days)")
+    rj.add_argument("id")
+    rj.add_argument("--note")
 
     sv = add("serve", cmd_serve, "run the hub (web UI, REST, MCP)", user=False)
     sv.add_argument("--host", default="127.0.0.1")

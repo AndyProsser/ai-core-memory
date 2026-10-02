@@ -174,7 +174,7 @@ what's relevant) — the hub just does it faster and with ranking.
 
 The core budget is enforced when a record is promoted, against the core records visible to
 the person doing the promoting — exact per-session accounting across user, team, and project
-core arrives with the Phase 2 proposal flow; focus reports (rather than hides) an
+core is still open (see the roadmap); the `promote_core` proposal does make room exactly. Focus reports (rather than hides) an
 over-budget core set. Two deliberate limits. **No embeddings in the core path** — consistent with the
 non-goals above; FTS5 + topics + links is enough for thousands of curated records, and a
 vector index can arrive later as a [plugin](PLUGINS.md), not a dependency. And
@@ -190,23 +190,45 @@ edge case:
 
 - **Reinforcement.** When a later session independently re-establishes a fact, the
   record's `last_reinforced` is bumped and its `reinforcement_count` incremented
-  (tracked per distinct `source_ref`, so one chatty session can't reinforce itself).
-  Two independent reinforcements promote `observed` → `confirmed`, matching the tier
-  definitions above. `established` still requires the user to say so.
+  (tracked per distinct `source_ref` in the `reinforcements` table, so one chatty session
+  can't reinforce itself — and the session that _created or last edited_ a record is
+  registered without counting, so it can't vouch for its own work either). Two
+  independent reinforcements promote `observed` → `confirmed`, matching the tier
+  definitions above. `established` still requires the user to say so. Writing identical
+  content with a `source_ref` is itself a reinforcement (via `memory.write`, or the
+  dedicated `memory.reinforce`); reinforcing a `stale` record revives it; reinforcing a
+  `superseded`/`archived` one is refused. Reinforcement is evidence, not an edit, so it's
+  allowed on `established` records too — it can only bump counters. _Limit, stated
+  plainly:_ the hub trusts a client's `source_ref` to name a genuinely different session.
+  A client that fabricates refs could push an `observed` record to `confirmed`; the
+  consequence is bounded (confirmed records only become flagged-on-change, never
+  protected like `established`) and every step is in the revision history and attributable
+  to its token.
 - **Supersession, not deletion.** When something genuinely changes — a decision
   reversed, a preference outgrown — the new record carries `supersedes: [old-id]`; the
   old record becomes `status: superseded` with a `valid_to` date and drops out of focus
-  but stays in history. This is what lets the UI show _how a belief evolved_ ("used to
+  but stays in history (a `supersedes` row in `memory_links`, new → old). Retiring the old
+  record is an ordinary write, so every confidence-tier rule applies to it: an AI client
+  can't supersede an `established` record, and a person must confirm. Supersession stays
+  within one scope and project; moving a fact to a broader scope is `promote_scope`. If an
+  AI client retires a _core_ record, the hub files a `promote_core` proposal for its
+  replacement rather than letting the standing context silently shrink. This is what lets the UI show _how a belief evolved_ ("used to
   prefer X, since March prefers Y") instead of only its latest value. It applies to
   records about the user and to records about how the AI should work (`feedback`,
   `rule`) alike.
 - **Decay.** Unreinforced records go `stale`, scaled to confidence: `observed` after
-  `stale_after_days.observed` (default 90), `confirmed` after
-  `stale_after_days.confirmed` (default 365). `observed` records are marked stale
+  `stale_after_days_observed` (default 90), `confirmed` after
+  `stale_after_days_confirmed` (default 365). `observed` records are marked stale
   automatically (logged as a revision, reversible, visible in the UI); `confirmed`
   records produce a `mark_stale` _proposal_ instead; `established` records never decay
-  but produce a periodic `review_established` proposal ("still true?") — never a silent
-  change. `stale` records are excluded from focus until revived or archived.
+  but produce a periodic `review_established` proposal ("still true?",
+  `review_established_days`, default 365) — never a silent change. `stale` records are
+  excluded from focus until revived or archived. The staleness clock is the latest of
+  `last_reinforced`, `updated_at` and `created_at` — _not_ retrieval. One concession to use:
+  an `observed` record that was **served to a session within the last 30 days** is not
+  auto-staled (it is evidently in play), but being served still never raises its
+  confidence. A person can restart any record's clock with **Still true** in the UI, which
+  changes nothing else.
 - **Everything is revisioned.** Every change — by a dream pass, an MCP write, a person
   in the UI, an import — lands in `memory_revisions` with who/what/why. Nothing is
   overwritten without a trail.
@@ -305,14 +327,63 @@ vendor-neutral while still letting memory consolidate on its own schedule:
   writes back results.
 
 Both produce **proposals** rather than direct edits, in a queue a human reviews (web UI
-or `acm review`, no AI involved). A proposal has a `kind` — `merge`, `supersede`,
-`promote_scope`, `promote_core`, `demote_core`, `mark_stale`, `archive`,
-`review_established`, `conflict` — the records it touches, a proposed diff, and a
-rationale. Approving one applies it through the same server-side confidence-tier
-enforcement as any other write; low-risk `observed`-only proposals may be set to
-auto-apply per instance, but anything touching `confirmed`/`established` records, scope,
-or core always waits for a person. A hub with no model attached still works — it just
-produces only the mechanical proposals.
+or `acm review`, no AI involved). A proposal has a `kind`, the records it touches, a
+payload (the proposed change), and a one-sentence rationale. Approving one applies it
+through the same server-side confidence-tier enforcement as any other write, atomically —
+if any step fails, nothing changes and the proposal stays pending.
+
+| Kind | Payload (all values are record ids) | Applying it… |
+| --- | --- | --- |
+| `merge` | `keep`, `retire`, optional `merged: {description, body}` | rewrites `keep` if `merged` is given, then supersedes `retire` by `keep` |
+| `supersede` | `old`, `new` | retires `old` into history, linked to `new` |
+| `promote_scope` | `source`, `to_scope` (`team`\|`user`), `team`?, optional `name`/`description`/`body` | creates the record in the broader scope (as the approver), retires the original |
+| `promote_core` | `record`, optional `demote: [ids]` | demotes those first (making room), then promotes — the budget check is exact |
+| `demote_core` | `record` | moves it to `associated` |
+| `mark_stale` / `archive` | `record` | sets that status |
+| `review_established` | `record` | "still true": restarts its review clock, changes nothing else |
+| `conflict` | `record`, `revision` | applies or discards the parked incoming version |
+
+What may raise them: the **mechanical pass** raises `merge`, `mark_stale`,
+`review_established`, `demote_core` (and holds `conflict`s); **AI clients** may propose
+`merge`, `supersede`, `promote_scope`, `promote_core`, `demote_core`, `mark_stale`,
+`archive` — never `review_established` or `conflict`, which are the hub's alone. **Only a
+person decides.** Safeguards: identical open proposals are reused; a proposal a person
+**rejected** isn't re-raised for 30 days; a proposal whose records have since changed
+(archived, already merged, …) is closed as `expired` rather than applied; approving one that
+would alter an `established` record needs the same explicit confirmation as a direct edit.
+
+**Conflicts.** When an import, a sync, or an AI client's `memory.write` collides with an
+`established` record (or, for imports, with a newer hub copy), the incoming version is
+parked as a flagged, unapplied revision _and_ filed as a `conflict` proposal showing both
+versions side by side — so the AI client gets an error to relay and the person gets a
+card, rather than the change being lost. Retries of the same content reuse the pending one.
+
+**Auto-apply (opt-in, `auto_apply_proposals`).** Off by default. When on, the hub applies
+a proposal itself only if it is (a) hub-generated — an AI-written proposal is never
+auto-applied, (b) one of `merge` / `archive` / `mark_stale`, and (c) touches **only
+`observed`** records. The UI's "Approve all low-risk" button batches exactly that same
+set. Everything involving `confirmed`/`established` records, scope, or core always waits for
+a person. A hub with no model attached still works — it just produces only the mechanical
+proposals.
+
+**The mechanical pass** (`acm consolidate`, the Review screen's "Run now" — scoped to what
+you can edit — and a built-in scheduler, default every 24 h, `MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS`,
+`0` disables; due-ness is stored in the database so a hub that restarts daily still runs
+daily) does: **decay** (above); **duplicate candidates** — within one scope/project, pairs
+whose description + body text overlap ≥ 60 % (word-set Jaccard, names ignored, ≥ 6 words each),
+proposing to keep the better-supported record; **core budget** — if core is over budget, a
+`demote_core` for the least-reinforced records until it fits; and it closes proposals that no
+longer apply. `acm consolidate --dry-run` reports without changing anything. The only change
+it makes by itself is marking _unreinforced `observed`_ records stale (a logged, reversible
+revision attributed to `mechanical`); it runs as a **system principal that can never change an
+`established` record, a tier, or a scope**.
+
+**The work package** (`memory.consolidate`) is the judgement half, pulled by an AI client:
+the inbox items to classify (marked `external` when they came from a plugin), duplicate
+candidates with both texts, records approaching their staleness limit, the core set and its
+budget, and proposals already pending (so the client doesn't re-propose them) — plus
+instructions. The client acts through `memory.write` / `memory.reinforce` / `memory.propose` /
+`inbox.resolve`; it decides nothing.
 
 ## Memory hub (cross-project store)
 
@@ -351,7 +422,7 @@ binding constraint.
 
 | Table                | Purpose                                                                                                                                                                                                                                                         |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instance_settings`  | singleton row: `deployment_mode` (`solo`/`team`/`multi_team`), enabled auth providers, default token expiry, `core_token_budget`, `stale_after_days`, auto-apply policy for proposals.                                                                          |
+| `instance_settings`  | singleton row: `deployment_mode` (`solo`/`team`/`multi_team`), enabled auth providers, token expiry defaults/maximum, `core_token_budget`, `stale_after_days_observed`/`_confirmed`, `review_established_days`, `auto_apply_proposals`, `last_consolidation_at`. |
 | `users`              | id, email, password_hash (nullable if OIDC-only), auth_provider, external_id, is_admin, theme_preference (`system`/`light`/`dark`), created_at.                                                                                                                 |
 | `teams`              | id, name, slug, created_at.                                                                                                                                                                                                                                     |
 | `team_members`       | team_id, user_id, role (`owner`/`member`) — who's on a team, opt-in per "Team scope is opt-in."                                                                                                                                                                 |
@@ -362,8 +433,9 @@ binding constraint.
 | `memory_revisions`   | id, memory_record_id, snapshot (name, description, body, type, scope, confidence, tier, status, topics), changed_by_user_id, changed_by_token_id, changed_by_label (OS user for CLI), changed_at, change_note, flagged, applied (false = a pending import/sync conflict awaiting a human), change_source (`dream-cycle`/`mcp-write`/`import`/`ui`/`cli`/`plugin`/`mechanical`).                                           |
 | `web_sessions`       | id (SHA-256 of the cookie value), user_id, csrf_token, created_at, authenticated_at, last_seen_at, expires_at — server-side login sessions for the web UI (never used for token routes).                                                                                                                                          |
 | `auth_flows`         | state_hash, nonce, code_verifier, binding_hash, reauth, created_at — short-lived in-flight OIDC logins (state/nonce/PKCE), single use.                                                                                                                                                                                                    |
+| `reinforcements`     | record_id, source_ref, reinforced_at, by_token_id, by_user_id — one row per (record, independent source); the primary key is what stops a session reinforcing itself.                                                                                                                                                                      |
 | `inbox_items`        | id, source (`mcp`/`ui`/`cli`/`plugin:<key>`), scope, project_id, title, body, external_ref (URL/path in the originating system), captured_at, status (`new`/`harvested`/`dismissed`).                                                                           |
-| `proposals`          | id, kind, target_record_ids, proposed_diff, rationale, generated_by (`mechanical`/`dream-skill`/`llm-worker`), status (`pending`/`approved`/`rejected`/`applied`/`expired`), decided_by_user_id, decided_at.                                                     |
+| `proposals`          | id, kind, status (`pending`/`applied`/`rejected`/`expired`), payload (JSON), target_ids, rationale, generated_by (`mechanical`/`dream-skill`/`llm-worker`), generated_by_token_id, dedupe_key, created_at, decided_by_user_id, decided_by_label (`auto`/OS user), decided_at, decision_note. |
 | `plugin_instances`   | id, plugin_key, name, kind (`source`/`sink`/`both`), non-secret config, secret references (env var names, never values), enabled, scope allowlist, event filter, last_run_at, last_status. See [docs/PLUGINS.md](PLUGINS.md).                                  |
 | `events`             | id, type, payload (minimal — ids and titles, not bodies), created_at — the outbox every sink plugin reads from.                                                                                                                                                 |
 | `plugin_deliveries`  | event_id, plugin_instance_id, status, attempts, next_attempt_at, last_error — reliable, retryable, per-plugin delivery.                                                                                                                                         |
@@ -411,8 +483,9 @@ Three audiences, three ways in, one process, one set of access-control rules:
   routine AI-driven writes: `memory.focus` (task-focused context pack — see
   [Task focus](#task-focus)), `memory.search`, `memory.get`, `memory.write`,
   `memory.sync` (bulk upsert from a repo's `memory/data/` after a dream pass),
-  `memory.consolidate` (pull a work package of consolidation candidates, return
-  proposals — Phase 2), `inbox.add`. **Tool names are underscored on the wire**
+  `memory.reinforce`, `memory.propose`, `memory.consolidate` (pull the open consolidation
+  work package — see [the proposal queue](#who-does-the-reasoning-the-proposal-queue)),
+  `inbox.add`, `inbox.resolve`. **Tool names are underscored on the wire**
   (`memory_focus`, `memory_write`, `inbox_add`, …) because several MCP clients restrict
   tool names to `[A-Za-z0-9_-]`; this document keeps the dotted form for readability. The hub stays deliberately "dumb" about models: it enforces
   access control and the confidence-tier mutation rule server-side, but the
@@ -423,7 +496,7 @@ Three audiences, three ways in, one process, one set of access-control rules:
   See [Import / export](#import--export--offline-human-operated) below; this is also how
   a fresh instance is bootstrapped and how access is recovered.
 
-MCP clients can read and write (within their token's scope), and in Phase 2 propose; they
+MCP clients can read and write (within their token's scope) and propose; they
 cannot approve a proposal, mint tokens, change instance settings, run import/export, mark a
 record `established`, change a record's tier, or write team-scope memory. Those are
 human-only operations, enforced server-side.
@@ -440,7 +513,7 @@ myself" is the guarantee behind "own everything." Two ways in, both human-operat
    directory**, with the server stopped, with no network, and with no model: `acm export`,
    `acm import` (dry run unless `--apply`), `acm list`, `acm show`, `acm edit`, plus
    bootstrap/recovery commands (`acm setup-code`, `acm user`, `acm token`, `acm doctor`,
-   `acm reindex`). `acm review` for proposals arrives with Phase 2. SQLite in WAL mode
+   `acm reindex`), and `acm consolidate` / `acm review` for the proposal queue. SQLite in WAL mode
    makes this safe to run even alongside a live server. The test suite runs the CLI with
    network connections blocked to keep that promise honest.
 
@@ -590,13 +663,20 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
 - [ ] Team/membership screens (the data model and access rules are in place and tested; there's
       no UI to create teams or invite members yet — Phase 4)
 
-**Phase 2 — memory that learns**
+**Phase 2 — memory that learns** (built)
 
-- [ ] Lifecycle: reinforcement, supersession, decay, `status`
-- [ ] Mechanical consolidation job + proposal queue + Review screen; `memory.consolidate`
-      work packages; `dream` skill updated to read/write proposals
-- [ ] Core budget enforcement and `promote_core`/`demote_core` proposals
-- [ ] Promotion workflow with an explicit human approval step (the proposal queue _is_ it)
+- [x] Lifecycle: reinforcement (per-source, self-reinforcement-proof), supersession with a
+      visible "how this changed" timeline, decay, `status`
+- [x] Mechanical consolidation pass (scheduler, `acm consolidate`, "Run now") + proposal queue
+      + Review screen + `acm review`; `memory_consolidate` work packages; `memory_propose`;
+      the `dream` skill updated to use them
+- [x] Core budget enforcement at promotion, `promote_core` / `demote_core` proposals
+- [x] Promotion workflow with an explicit human approval step (the proposal queue _is_ it),
+      including `promote_scope`
+- [ ] Per-session core accounting across user + team + project core (the budget is checked
+      against the core visible to whoever is promoting, which is exact for `solo`)
+- [ ] LLM-assisted classification _inside_ the hub (`generated_by: llm-worker` is reserved; today
+      judgement comes from an AI client pulling the work package)
 
 **Phase 3 — plugins**
 

@@ -51,6 +51,9 @@ with these deliberate defaults:
   `MEMORY_HUB_TRUST_PROXY=true` (API tokens are refused over plain HTTP from non-private
   addresses — see [SECURITY.md](SECURITY.md)).
 - `MEMORY_HUB_SECRET_KEY` is **required** — compose refuses to start without it.
+- `MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS` (default `24`, `0` disables) sets how often the hub runs its
+  mechanical consolidation pass (decay, duplicate candidates, core budget). It's restart-safe (the last-run
+  time is in the database) and you can always run it by hand: `acm consolidate [--dry-run]`.
 - Optional SSO via `MEMORY_HUB_OIDC_ISSUER` / `_CLIENT_ID` / `_CLIENT_SECRET`; register
   `<MEMORY_HUB_PUBLIC_URL>/auth/oidc/callback` as the redirect URI. Secrets come from `.env`,
   never the image.

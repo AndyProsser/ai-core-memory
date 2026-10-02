@@ -413,3 +413,243 @@ def test_password_change_ends_other_sessions(authed):
         TestClient(app).post("/login", data={"email": "admin@example.com", "password": PASSWORD}).status_code
         == 401
     )
+
+
+# --- Phase 2 UI: Review (proposals), lifecycle on the record page ---------------------------------------------
+
+DUP = "Always send an idempotency key on webhook retries so a replay can never double charge a customer."
+
+
+def new_record(client, token, name, body=DUP, **kw):
+    data = {
+        "csrf_token": token,
+        "name": name,
+        "description": f"{name} about webhook retries",
+        "body": body,
+        "type": "feedback",
+        "scope": "user",
+    } | kw
+    r = client.post("/memory/new", data=data, follow_redirects=False)
+    assert r.status_code == 303, r.text
+    return r.headers["location"].split("/memory/")[1].split("?")[0]
+
+
+def run_now(client, token):
+    return client.post("/review/consolidate", data={"csrf_token": token}, follow_redirects=False)
+
+
+def test_review_shows_proposals_with_a_badge_and_approving_applies_them(authed):
+    client, app, token = authed
+    a, b = new_record(client, token, "keys-one"), new_record(client, token, "keys-two")
+    r = run_now(client, token)
+    assert "1%20new%20proposal" in r.headers["location"]
+    page = client.get("/review").text
+    assert "Merge keys-two into keys-one" in page or "Merge keys-one into keys-two" in page
+    assert "from the hub" in page and "Text overlap" in page
+    assert re.search(r'class="count"[^>]*>1<', client.get("/memory").text)  # the nav badge counts it
+    pid = re.search(r'action="/review/proposals/([0-9A-Z]{26})"', page).group(1)
+    r = client.post(
+        f"/review/proposals/{pid}", data={"csrf_token": token, "action": "approve"}, follow_redirects=False
+    )
+    assert r.status_code == 303 and "Applied" in r.headers["location"]
+    active_ids = set(re.findall(r'href="/memory/([0-9A-Z]{26})"', client.get("/memory").text))
+    retired_ids = set(
+        re.findall(r'href="/memory/([0-9A-Z]{26})"', client.get("/memory?status=superseded").text)
+    )
+    assert (
+        len(active_ids & {a, b}) == 1 and len(retired_ids & {a, b}) == 1
+    )  # one kept, one retired into history
+    assert "Nothing to review" in client.get("/review").text
+    assert "applied" in client.get("/review?show=all").text
+    again = client.post(
+        f"/review/proposals/{pid}", data={"csrf_token": token, "action": "approve"}, follow_redirects=False
+    )
+    assert "already" in again.headers["location"]
+
+
+def test_reject_and_csrf_on_review_actions(authed):
+    client, app, token = authed
+    new_record(client, token, "keys-one"), new_record(client, token, "keys-two")
+    run_now(client, token)
+    pid = re.search(r'action="/review/proposals/([0-9A-Z]{26})"', client.get("/review").text).group(1)
+    assert (
+        client.post(f"/review/proposals/{pid}", data={"action": "approve"}).status_code == 403
+    )  # no CSRF token
+    assert client.post("/review/consolidate", data={}).status_code == 403
+    assert client.post("/review/approve-low-risk", data={}).status_code == 403
+    client.post(
+        f"/review/proposals/{pid}", data={"csrf_token": token, "action": "reject", "note": "different"}
+    )
+    assert "Nothing to review" in client.get("/review").text
+    run_now(client, token)
+    assert "Nothing to review" in client.get("/review").text  # rejected: not re-raised
+
+
+def test_batch_approve_only_takes_low_risk_proposals(authed):
+    client, app, token = authed
+    t2 = "Run the linter locally before every commit so the build never fails on style alone, ever."
+    for n in ("keys-one", "keys-two"):
+        new_record(client, token, n)
+    for n in ("lint-one", "lint-two"):
+        new_record(client, token, n, body=t2, confidence="confirmed")  # confirmed: not low risk
+    run_now(client, token)
+    page = client.get("/review").text
+    assert page.count('class="card proposal"') == 2 and "1 low-risk" not in page
+    # one low-risk proposal doesn't get a batch button (the button appears from 2 up)
+    assert "/review/approve-low-risk" not in page
+    new_record(
+        client,
+        token,
+        "other-a",
+        body="Prefer small focused pull requests with descriptive titles and linked issues always.",
+    )
+    new_record(
+        client,
+        token,
+        "other-b",
+        body="Prefer small focused pull requests with descriptive titles and linked issues always.",
+    )
+    run_now(client, token)
+    page = client.get("/review").text
+    assert "2 low-risk proposals" in page
+    r = client.post("/review/approve-low-risk", data={"csrf_token": token}, follow_redirects=False)
+    assert "Approved%202" in r.headers["location"]
+    after = client.get("/review").text
+    assert (
+        after.count('class="card proposal"') == 1 and "lint-" in after
+    )  # only the confirmed pair is left for a person
+
+
+def test_established_proposal_requires_the_confirmation_box(authed):
+    client, app, token = authed
+    from acm_hub import proposals as pr
+    from acm_hub.access import principal_for_user
+    from acm_hub.models import MemoryRecord, User
+
+    old = new_record(client, token, "bedrock-rule", confidence="established", type="rule")
+    new = new_record(client, token, "newer-rule", body="a replacement")
+    with Session(app.state.engine) as s:
+        human = principal_for_user(s, s.exec(select(User)).one())
+        pr.create_proposal(s, human, "supersede", {"old": old, "new": new}, rationale="the rule changed")
+        s.commit()
+    page = client.get("/review").text
+    assert "established" in page and 'name="confirm_established"' in page
+    pid = re.search(r'action="/review/proposals/([0-9A-Z]{26})"', page).group(1)
+    r = client.post(
+        f"/review/proposals/{pid}", data={"csrf_token": token, "action": "approve"}, follow_redirects=False
+    )
+    assert "confirmation" in r.headers["location"]
+    with Session(app.state.engine) as s:
+        assert s.get(MemoryRecord, old).status == "active"
+    r = client.post(
+        f"/review/proposals/{pid}",
+        data={"csrf_token": token, "action": "approve", "confirm_established": "1"},
+        follow_redirects=False,
+    )
+    assert "Applied" in r.headers["location"]
+    with Session(app.state.engine) as s:
+        assert s.get(MemoryRecord, old).status == "superseded"
+
+
+def test_supersede_from_the_record_page_keeps_history_and_shows_the_timeline(authed):
+    client, app, token = authed
+    old = new_record(client, token, "prefers-tabs", body="Use tabs.")
+    form = client.get(f"/memory/new?supersedes={old}").text
+    assert (
+        "will <strong>replace</strong>" in form and 'name="supersedes"' in form and "prefers-tabs-v2" in form
+    )
+    r = client.post(
+        "/memory/new",
+        data={
+            "csrf_token": token,
+            "name": "prefers-spaces",
+            "description": "now spaces",
+            "body": "Use spaces.",
+            "type": "feedback",
+            "scope": "user",
+            "supersedes": old,
+        },
+        follow_redirects=False,
+    )
+    new = r.headers["location"].split("/memory/")[1].split("?")[0]
+    page = client.get(f"/memory/{new}").text
+    assert "How this changed" in page and "prefers-tabs" in page
+    oldpage = client.get(f"/memory/{old}").text
+    assert (
+        "has been replaced" in oldpage and "prefers-spaces" in oldpage and "Use tabs." in oldpage
+    )  # history is intact
+    assert (
+        "prefers-tabs" not in client.get("/memory").text
+        and "prefers-tabs" in client.get("/memory?status=superseded").text
+    )
+    assert "Replace with" not in oldpage  # can't re-supersede a superseded record
+
+
+def test_still_true_restarts_the_clock_and_revives_stale_records(authed):
+    client, app, token = authed
+    from acm_hub.models import MemoryRecord
+
+    rid = new_record(client, token, "maybe-old")
+    client.post(f"/memory/{rid}/quick", data={"csrf_token": token, "status": "stale"})
+    assert (
+        "stale" in client.get(f"/memory/{rid}").text and "isn't served" in client.get(f"/memory/{rid}").text
+    )
+    client.post(f"/memory/{rid}/still-true", data={"csrf_token": token})
+    with Session(app.state.engine) as s:
+        rec = s.get(MemoryRecord, rid)
+        assert rec.status == "active" and rec.last_reinforced is not None and rec.body == DUP
+    assert client.post(f"/memory/{rid}/still-true", data={}).status_code == 403
+
+
+def test_lifecycle_settings_are_validated_and_saved(authed):
+    client, app, token = authed
+    base = {
+        "csrf_token": token,
+        "deployment_mode": "solo",
+        "core_token_budget": "2000",
+        "default_token_expiry_days": "90",
+        "max_token_expiry_days": "365",
+        "stale_after_days_observed": "30",
+        "stale_after_days_confirmed": "200",
+        "review_established_days": "180",
+        "auto_apply_proposals": "1",
+    }
+    assert client.post("/settings/instance", data=base, follow_redirects=False).status_code == 303
+    from acm_hub.models import InstanceSettings
+
+    with Session(app.state.engine) as s:
+        i = s.get(InstanceSettings, 1)
+        assert (
+            i.stale_after_days_observed,
+            i.stale_after_days_confirmed,
+            i.review_established_days,
+            i.auto_apply_proposals,
+        ) == (30, 200, 180, True)
+    assert (
+        client.post("/settings/instance", data=base | {"stale_after_days_observed": "1"}).status_code == 422
+    )
+    assert (
+        'name="auto_apply_proposals"' in client.get("/settings").text
+        and "checked" in client.get("/settings").text
+    )
+
+
+def test_proposals_are_private_to_their_owner_in_the_ui(authed):
+    client, app, token = authed
+    new_record(client, token, "keys-one"), new_record(client, token, "keys-two")
+    run_now(client, token)
+    pid = re.search(r'action="/review/proposals/([0-9A-Z]{26})"', client.get("/review").text).group(1)
+    from acm_hub.models import User
+    from acm_hub.security import hash_password
+
+    with Session(app.state.engine) as s:
+        s.add(User(email="other@example.com", password_hash=hash_password(PASSWORD)))
+        s.commit()
+    other = TestClient(app)
+    other.post("/login", data={"email": "other@example.com", "password": PASSWORD})
+    t2 = csrf_of(other.get("/memory").text)
+    assert "Nothing to review" in other.get("/review").text
+    assert (
+        other.post(f"/review/proposals/{pid}", data={"csrf_token": t2, "action": "approve"}).status_code
+        == 404
+    )

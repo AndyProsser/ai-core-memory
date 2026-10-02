@@ -104,7 +104,8 @@ that should use your hub, with the token in `${MEMORY_HUB_TOKEN}`, never in the 
 plugin bundle (Phase 4, below) is where a shipped entry belongs.
 
 The tools the hub exposes are `memory_focus`, `memory_search`, `memory_get`,
-`memory_write`, `memory_sync`, and `inbox_add`; the server's built-in instructions tell a
+`memory_write`, `memory_sync`, `memory_reinforce`, `memory_propose`, `memory_consolidate`,
+`inbox_add`, and `inbox_resolve`; the server's built-in instructions tell a
 connected assistant how to use them (focus at the start of a task, write narrowly, never claim
 `established`).
 

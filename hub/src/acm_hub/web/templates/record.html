@@ -23,6 +23,8 @@
 
 <div class="record-grid">
   <div>
+    {% if rec.status == 'superseded' %}<div class="warning small">This record has been replaced{% if replaced_by %} by <a href="/memory/{{ replaced_by[0].id }}">{{ replaced_by[0].name }}</a>{% endif %}. It is kept for history and isn't served to assistants.</div>{% endif %}
+    {% if rec.status == 'stale' %}<div class="warning small">This record is stale: it hasn't been reinforced or changed in a while, so it isn't served to assistants. Press <strong>Still true</strong> to bring it back.</div>{% endif %}
     <p class="desc lead">{{ rec.description }}</p>
     <div class="tabs" role="tablist">
       <a href="/memory/{{ rec.id }}" {% if tab == 'record' %}aria-current="page"{% endif %}>Record</a>
@@ -41,6 +43,16 @@
       {% endfor %}
     {% else %}
       <div class="prose">{% if rec.body %}{{ rec.body|md }}{% else %}<p class="muted">No body text.</p>{% endif %}</div>
+      {% if chain|length > 1 %}
+      <h2>How this changed</h2>
+      <ol class="timeline">
+        {% for r in chain %}<li {% if r.id == rec.id %}aria-current="true"{% endif %}>
+          <span class="when">{{ r.created_at|date }}</span>
+          {% if r.id == rec.id %}<strong>{{ r.name }}</strong> <span class="muted">(this record)</span>{% else %}<a href="/memory/{{ r.id }}">{{ r.name }}</a>{% endif %}
+          <span class="badge {{ r.status }}">{{ r.status }}</span>
+          <div class="small muted">{{ r.description }}</div></li>{% endfor %}
+      </ol>
+      {% endif %}
     {% endif %}
   </div>
 
@@ -54,15 +66,22 @@
       <dt>Status</dt><dd>{{ rec.status }}</dd>
       <dt>Created</dt><dd>{{ rec.created_at|date }}</dd>
       <dt>Updated</dt><dd>{{ rec.updated_at|date }}</dd>
+      <dt>Reinforced</dt><dd>{{ rec.reinforcement_count }}×{% if rec.last_reinforced %}, last {{ rec.last_reinforced|date }}{% endif %}</dd>
+      <dt>Last served</dt><dd>{{ rec.last_retrieved|date if rec.last_retrieved else 'never' }}</dd>
+      {% if rec.valid_to %}<dt>Valid until</dt><dd>{{ rec.valid_to|date }}</dd>{% endif %}
       <dt>Source</dt><dd>{{ rec.source }}{% if rec.source_trust == 'external' %} (external){% endif %}</dd>
     </dl>
     {% if rec.topics %}<h3>Topics</h3><span class="badges">{% for t in rec.topics %}<a class="badge" href="/memory?topic={{ t|urlencode }}">#{{ t }}</a>{% endfor %}</span>{% endif %}
     {% if related %}<h3>Related</h3><ul class="small compact">{% for r in related %}<li><a href="/memory/{{ r.id }}">{{ r.name }}</a></li>{% endfor %}</ul>{% endif %}
     <h3>Quick actions</h3>
+    {% if rec.status != 'superseded' %}
+    <form method="post" action="/memory/{{ rec.id }}/still-true" class="actions tight">{{ csrf() }}<button type="submit" title="Restart the decay clock without changing anything">Still true</button>
+      <a class="btn" href="/memory/new?supersedes={{ rec.id }}" title="Write the record that replaces this one; this one stays in history">Replace with…</a></form>
+    {% endif %}
     <form method="post" action="/memory/{{ rec.id }}/quick" class="actions tight">
       {{ csrf() }}
       {% if rec.confidence == 'established' %}<label class="inline small"><input type="checkbox" name="confirm_established" value="1"> Confirm (established)</label>{% endif %}
-      {% if rec.tier == 'core' %}<button name="tier" value="associated">Make associated</button>{% else %}<button name="tier" value="core">Make core</button>{% endif %}
+      {% if rec.status == 'active' %}{% if rec.tier == 'core' %}<button name="tier" value="associated">Make associated</button>{% else %}<button name="tier" value="core">Make core</button>{% endif %}{% endif %}
       {% if rec.status == 'active' %}<button name="status" value="stale">Mark stale</button><button name="status" value="archived">Archive</button>
       {% else %}<button name="status" value="active">Restore</button>{% endif %}
     </form>

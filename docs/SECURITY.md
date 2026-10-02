@@ -192,8 +192,9 @@ of the security model, not just convenience:
   record service: it can't set a record `established`, can't change a record's tier
   (core promotion is human-gated), can't write `team` scope, can't change a record's scope,
   and can't change an `established` record at all (it gets a conflict to surface to the user).
-  `memory_sync` from a token that collides with an `established` or newer record parks the
-  incoming version as a flagged, unapplied revision for a person to resolve. Those are human-session-only
+  `memory_sync` / `memory_write` from a token that collides with an `established` or newer
+  record parks the incoming version as a flagged, unapplied revision _and_ a `conflict`
+  proposal for a person to resolve. Those are human-session-only
   operations. A compromised token can therefore at worst add `observed` records and
   proposals within its scope — and every one of them is attributed to the token and
   reviewable.
@@ -255,7 +256,31 @@ to the wrong Slack channel can't be un-posted.
 - **Auditable.** Every delivery and every inbound pull is recorded (`plugin_deliveries`,
   `change_source = 'plugin'` on any resulting revision) and visible in the Plugins screen.
 
-## Phase 1 implementation notes
+## Proposals: AI suggestions, human decisions
+
+The proposal queue (see [ARCHITECTURE.md](ARCHITECTURE.md#who-does-the-reasoning-the-proposal-queue))
+is where AI-suggested change meets a person, so its rules are part of the security model:
+
+- **A token can propose; only a session or the host CLI can decide.** `memory_propose` needs a
+  read-write token; there is no tool to approve or reject. The mechanical job's system
+  principal can't decide either, and it can never change an `established` record, a tier, or a
+  scope (a test asserts each of these).
+- **An AI can't pose as the hub.** It cannot raise `review_established` or `conflict`, its
+  `generated_by` can never be `mechanical`, and so its proposals are never eligible for
+  auto-apply or the "approve all low-risk" batch, which cover hub-generated, all-`observed`
+  proposals only.
+- **Visibility follows the records.** A proposal is visible only to people who can read _every_
+  record it touches; approving needs write access to them. Proposals about someone's
+  user-scope memory are invisible to everyone else, admins included.
+- **Rationales and payload text are untrusted.** They're rendered escaped in the UI, capped in
+  size (1,000 characters of rationale, 20 KB of payload), and never interpreted.
+- **Spam resistance.** Identical open proposals are reused, and one a person rejected isn't
+  re-raised for 30 days — a misbehaving client can't bury the review queue.
+- **Approval is atomic and re-validated.** On approval the hub re-checks that the records still
+  fit the proposal (closing it as `expired` if not) and applies it in a savepoint, so a failure
+  half-way leaves nothing changed.
+
+## Implementation notes
 
 What is built, and the limits of it, stated plainly:
 
@@ -267,6 +292,8 @@ What is built, and the limits of it, stated plainly:
   filesystem access (see CLI access above) and closes permanently once an admin exists.
 - There is no email, so there is no emailed password reset: a locked-out local admin
   recovers with `acm user set-password` on the host. OIDC users recover through their IdP.
+- The consolidation scheduler runs in the hub process; if you run several hub processes against one
+  database (not supported with SQLite), each would schedule its own pass.
 - Records and the database are not encrypted at rest (see Roles above for the
   roadmap idea). The DB file and its directory are created `0600`/`0700`.
 - Tokens and sessions are looked up by the SHA-256 of a 256-bit random value; there's no

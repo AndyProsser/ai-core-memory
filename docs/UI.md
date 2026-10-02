@@ -2,8 +2,7 @@
 
 The hub's human interface (see [ARCHITECTURE.md § Web UI](ARCHITECTURE.md#web-ui)).
 **Status:** Phase 1 is built (Memory, Record detail with history, Review's inbox and import
-conflicts, Focus preview, Data, Settings, first-run setup, light/dark theme). Proposals,
-Teams & Users, and Plugins screens arrive with their phases. The code is in
+conflicts, Focus preview, Data, Settings, first-run setup, light/dark theme). the proposal queue with side-by-side conflict and merge cards, supersede and "Still true" on the record page, and the lifecycle settings (Phase 2). Teams & Users and Plugins screens arrive with their phases. The code is in
 [`hub/src/acm_hub/web/`](../hub/src/acm_hub/web/); the screenshots-in-both-themes check used
 during development is described under Testing below.
 
@@ -92,12 +91,9 @@ why and, where it's a proposal-type action, offers to file a proposal instead.
 
 ### Review
 
-One queue mindset, three sections: **Import conflicts**, **Inbox**, and **Proposals**.
+One queue mindset, two sections: **Proposals** and **Inbox**.
 
-- **Import conflicts** _(built in Phase 1)_ — imports or syncs that would overwrite an
-  `established` or newer record are parked here; each opens the record to **Use this
-  version** or **Keep what's here**.
-- **Proposals** _(Phase 2; the section shows a placeholder until then)_ — each card says what would change in one sentence ("Merge
+- **Proposals** _(built in Phase 2)_ — each card says what would change in one sentence ("Merge
   `retry-policy` into `idempotent-retries`"), shows the diff, the rationale, who/what
   generated it (mechanical / dream skill / worker), and **Approve · Edit · Reject**.
   Batch-approve is offered only for `observed`-only proposals. Conflict cards (a new

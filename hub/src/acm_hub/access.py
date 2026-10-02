@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import and_, false, or_
+from sqlalchemy import and_, false, or_, true
 from sqlmodel import Session, select
 
 from .models import MemoryRecord, Project, TeamMember, User
@@ -37,8 +37,19 @@ class Principal:
         return self.kind in {"session", "cli"}
 
     @property
+    def is_system(self) -> bool:
+        return self.kind == "system"
+
+    @property
     def is_token(self) -> bool:
         return self.kind == "token"
+
+
+def system_principal() -> Principal:
+    """The mechanical consolidation job. Not reachable from any network path; it is only constructed inside
+    the hub (scheduler, `acm consolidate`). It can see everything but is NOT human: it can never change
+    `established` records, core, or scope — those always wait for a person."""
+    return Principal(user_id="", email="", kind="system", label="mechanical")
 
 
 def principal_for_user(
@@ -97,6 +108,8 @@ def readable_team_ids(session: Session, p: Principal) -> set[str]:
 
 def visible_clause(session: Session, p: Principal):
     """SQL condition selecting the records `p` may read (all statuses)."""
+    if p.is_system:
+        return true()
     parts = []
     if not p.is_token or p.token_include_user_scope:
         parts.append(and_(MemoryRecord.scope == "user", MemoryRecord.user_id == p.user_id))
@@ -110,6 +123,8 @@ def visible_clause(session: Session, p: Principal):
 
 
 def can_read(session: Session, p: Principal, rec: MemoryRecord) -> bool:
+    if p.is_system:
+        return True
     if rec.scope == "user":
         return rec.user_id == p.user_id and (not p.is_token or p.token_include_user_scope)
     if rec.scope == "team":
@@ -120,6 +135,8 @@ def can_read(session: Session, p: Principal, rec: MemoryRecord) -> bool:
 
 
 def can_write(session: Session, p: Principal, rec: MemoryRecord) -> bool:
+    if p.is_system:
+        return True
     if p.read_only:
         return False
     if rec.scope == "user":

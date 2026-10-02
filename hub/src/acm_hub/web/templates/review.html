@@ -1,14 +1,27 @@
 {% extends "base.html" %}
 {% from "_macros.html" import csrf %}
+{% from "_proposal_card.html" import proposal_card %}
 {% block title %}Review{% endblock %}
 {% block content %}
-<header class="page"><div><h1>Review</h1><p class="muted">Everything waiting on a human decision.</p></div></header>
+<header class="page">
+  <div><h1>Review</h1><p class="muted">Everything waiting on a human decision. Nothing here changes until you approve it.</p></div>
+  <form method="post" action="/review/consolidate">{{ csrf() }}<button type="submit">Run consolidation now</button></form>
+</header>
+<p class="hint">{% if last_run %}The hub last checked {{ last_run|datetime }} UTC: stale observed records, near-duplicates, core budget, overdue reviews.{% else %}The hub hasn't run its consolidation pass yet; it runs daily, or press the button.{% endif %}
+  {% if auto_apply %} Low-risk hub proposals are being applied automatically (Settings → Instance).{% endif %}</p>
 
-<h2>Import conflicts {% if pending %}({{ pending|length }}){% endif %}</h2>
-{% if pending %}
-<ul class="records">{% for c in pending %}<li><a class="title" href="/memory/{{ c.memory_record_id }}">{{ names[c.memory_record_id] }}</a>
-  <p class="desc">{{ c.change_note }} · {{ c.changed_at|datetime }}</p></li>{% endfor %}</ul>
-{% else %}<p class="muted">No conflicts. Imports that would overwrite an established or newer record appear here.</p>{% endif %}
+<h2>Proposals {% if views and show != 'all' %}({{ views|length }}){% endif %}</h2>
+<p class="small"><a href="/review" {% if show != 'all' %}aria-current="page"{% endif %}>Pending</a> · <a href="/review?show=all" {% if show == 'all' %}aria-current="page"{% endif %}>All, including decided</a></p>
+{% if low_risk|length > 1 %}
+<form method="post" action="/review/approve-low-risk" class="card">
+  {{ csrf() }}<strong>{{ low_risk|length }} low-risk proposals</strong>
+  <span class="muted">are hub-generated and only touch unreinforced <em>observed</em> records (merging duplicates, archiving).</span>
+  <div class="actions"><button type="submit">Approve all {{ low_risk|length }}</button></div>
+</form>
+{% endif %}
+{% for v in views %}{{ proposal_card(v) }}{% else %}
+<div class="empty"><p><strong>Nothing to review.</strong></p><p>Proposals appear here when the hub spots duplicates, stale or overdue records, or an AI suggests a change.</p></div>
+{% endfor %}
 
 <h2>Inbox {% if items %}({{ items|length }}){% endif %}</h2>
 {% if items %}
@@ -26,7 +39,4 @@
   {% endfor %}
 </ul>
 {% else %}<div class="empty"><p><strong>Inbox is empty.</strong></p><p>Press <kbd>c</kbd> to capture a snippet or idea; AI clients can add here too.</p></div>{% endif %}
-
-<h2>Proposals</h2>
-<p class="muted">Consolidation proposals (merge, supersede, promote, mark stale) arrive with the consolidation pass in the next phase. Until then, review and edit records directly in <a href="/memory">Memory</a>.</p>
 {% endblock %}

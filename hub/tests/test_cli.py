@@ -158,3 +158,73 @@ def test_doctor_and_reindex(settings, monkeypatch, capsys, tmp_path):
     assert "findable-thing" in run(monkeypatch, capsys, "list", "-q", "needle")[1]
     with Session(make_engine(settings)) as s:
         assert s.exec(select(MemoryRecord)).one().name == "findable-thing"
+
+
+# --- Phase 2: consolidate + review, offline -----------------------------------------------------------------
+
+
+def _import_md(monkeypatch, capsys, tmp_path, name, body, conf="observed", typ="feedback"):
+    f = tmp_path / f"{name}.md"
+    f.write_text(
+        f"---\nname: {name}\ndescription: {name} about webhook retries\nmetadata:\n  type: {typ}\n  scope: user\n  confidence: {conf}\n---\n\n{body}\n"
+    )
+    assert run(monkeypatch, capsys, "import", str(f), "--apply")[0] == 0
+
+
+def test_consolidate_and_review_work_fully_offline(settings, monkeypatch, capsys, tmp_path):
+    make_admin(monkeypatch, capsys)
+    text = "Always send an idempotency key on webhook retries so a replay can never double charge a customer."
+    _import_md(monkeypatch, capsys, tmp_path, "retry-keys-one", text)
+    _import_md(monkeypatch, capsys, tmp_path, "retry-keys-two", text)
+    code, out, _ = run(monkeypatch, capsys, "consolidate", "--dry-run")
+    assert code == 0 and "Dry run" in out and "'merge': 1" in out
+    assert run(monkeypatch, capsys, "review")[1].strip() == ""  # dry run changed nothing
+    code, out, _ = run(monkeypatch, capsys, "consolidate")
+    assert code == 0 and "acm review" in out
+    code, out, _ = run(monkeypatch, capsys, "review")
+    assert "merge" in out and "mechanical" in out
+    pid = out.split("\t")[0]
+    assert "why:" in run(monkeypatch, capsys, "review", "show", pid)[1]
+    assert run(monkeypatch, capsys, "consolidate")[1].count("new proposals: none") == 1  # idempotent
+    code, out, _ = run(monkeypatch, capsys, "review", "approve", pid)
+    assert code == 0 and "Approved" in out
+    listing = run(monkeypatch, capsys, "list")[1]
+    assert listing.count("retry-keys") == 1  # one was retired into history
+    assert listing.count("\n") == 1
+    assert "superseded" in run(monkeypatch, capsys, "list", "--status", "superseded")[1]
+    code, _, err = run(monkeypatch, capsys, "review", "approve", pid)
+    assert code == 1 and "already applied" in err
+
+
+def test_merge_keeps_the_established_record_untouched_and_needs_no_confirmation(
+    settings, monkeypatch, capsys, tmp_path
+):
+    make_admin(monkeypatch, capsys)
+    text = "Always send an idempotency key on webhook retries so a replay can never double charge a customer."
+    _import_md(monkeypatch, capsys, tmp_path, "bedrock-keys", text, conf="established", typ="rule")
+    _import_md(monkeypatch, capsys, tmp_path, "plain-keys", text)
+    run(monkeypatch, capsys, "consolidate")
+    pid = run(monkeypatch, capsys, "review")[1].split("\t")[0]
+    assert "bedrock-keys" in run(monkeypatch, capsys, "review", "show", pid)[1]
+    assert (
+        run(monkeypatch, capsys, "review", "approve", pid)[0] == 0
+    )  # the *weaker* record is retired; the established one is not altered
+    shown = run(monkeypatch, capsys, "show", "bedrock-keys")[1]
+    assert "confidence: established" in shown and text in shown
+    assert "plain-keys" not in run(monkeypatch, capsys, "list")[1]
+
+
+def test_rejecting_a_proposal_means_it_is_not_raised_again(settings, monkeypatch, capsys, tmp_path):
+    make_admin(monkeypatch, capsys)
+    text = "Always send an idempotency key on webhook retries so a replay can never double charge a customer."
+    _import_md(monkeypatch, capsys, tmp_path, "keys-one", text)
+    _import_md(monkeypatch, capsys, tmp_path, "keys-two", text)
+    run(monkeypatch, capsys, "consolidate")
+    pid = run(monkeypatch, capsys, "review")[1].split("\t")[0]
+    assert run(monkeypatch, capsys, "review", "reject", pid, "--note", "they differ")[0] == 0
+    assert "suppressed (recently rejected): 1" in run(monkeypatch, capsys, "consolidate")[1]
+    assert run(monkeypatch, capsys, "review")[1].strip() == ""
+    assert (
+        "rejected" in run(monkeypatch, capsys, "review", "--all")[1]
+        or pid in run(monkeypatch, capsys, "review", "--all")[1]
+    )

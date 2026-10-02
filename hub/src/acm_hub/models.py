@@ -26,6 +26,14 @@ class InstanceSettings(SQLModel, table=True):
     local_login_enabled: bool = True
     oidc_provisioning: str = "auto"  # auto | invite
     setup_code_hash: str | None = None
+    # Lifecycle / consolidation (docs/ARCHITECTURE.md § How memory changes over time)
+    stale_after_days_observed: int = Field(default=90, sa_column_kwargs={"server_default": "90"})
+    stale_after_days_confirmed: int = Field(default=365, sa_column_kwargs={"server_default": "365"})
+    review_established_days: int = Field(default=365, sa_column_kwargs={"server_default": "365"})
+    auto_apply_proposals: bool = Field(
+        default=False, sa_column_kwargs={"server_default": "0"}
+    )  # observed-only, low-risk kinds
+    last_consolidation_at: NaiveDatetime | None = None
 
 
 class User(SQLModel, table=True):
@@ -163,6 +171,37 @@ class MemoryRevision(SQLModel, table=True):
     change_source: str = "mcp-write"  # dream-cycle | mcp-write | import | ui | cli | plugin | mechanical
     flagged: bool = False  # called out for human attention (confirmed-record change, import conflict, ...)
     applied: bool = True  # False = a pending conflict awaiting a human decision
+
+
+class Reinforcement(SQLModel, table=True):
+    """One row per (record, independent source): a single session can only reinforce a record once."""
+
+    __tablename__ = "reinforcements"
+    record_id: str = Field(foreign_key="memory_records.id", primary_key=True)
+    source_ref: str = Field(primary_key=True)
+    reinforced_at: NaiveDatetime = Field(default_factory=utcnow)
+    by_token_id: str | None = Field(default=None, foreign_key="api_tokens.id")
+    by_user_id: str | None = Field(default=None, foreign_key="users.id")
+
+
+class Proposal(SQLModel, table=True):
+    """A suggested change awaiting a human decision (the consolidation queue)."""
+
+    __tablename__ = "proposals"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    kind: str  # merge | supersede | promote_scope | promote_core | demote_core | mark_stale | archive | review_established | conflict
+    status: str = "pending"  # pending | applied | rejected | expired
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    target_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    rationale: str = ""
+    generated_by: str = "mechanical"  # mechanical | dream-skill | llm-worker
+    generated_by_token_id: str | None = Field(default=None, foreign_key="api_tokens.id")
+    dedupe_key: str = Field(index=True)
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    decided_by_user_id: str | None = Field(default=None, foreign_key="users.id")
+    decided_by_label: str | None = None  # "auto" for auto-applied, OS user for CLI
+    decided_at: NaiveDatetime | None = None
+    decision_note: str | None = None
 
 
 class InboxItem(SQLModel, table=True):
