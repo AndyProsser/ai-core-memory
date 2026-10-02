@@ -1,0 +1,30 @@
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endmacro %}
+
+{% macro badges(r) %}
+<span class="badges">
+  {% if r.tier == 'core' %}<span class="badge core">core</span>{% endif %}
+  <span class="badge">{{ r.type }}</span>
+  <span class="badge">{{ r.scope }}</span>
+  <span class="badge {{ r.confidence }}">{{ r.confidence }}</span>
+  {% if r.status != 'active' %}<span class="badge {{ r.status }}">{{ r.status }}</span>{% endif %}
+</span>
+{% endmacro %}
+
+{% macro record_row(v) %}
+<li>
+  <a class="title" href="/memory/{{ v.r.id }}">{{ v.r.name }}</a>
+  {% if v.project %}<span class="muted small"> · {{ v.project }}</span>{% elif v.team %}<span class="muted small"> · team {{ v.team }}</span>{% endif %}
+  <p class="desc">{{ v.r.description }}</p>
+  <span class="badges">
+    {{ badges(v.r) }}
+    {% for t in v.r.topics %}<a class="badge" style="text-decoration:none" href="/memory?topic={{ t|urlencode }}">#{{ t }}</a>{% endfor %}
+  </span>
+</li>
+{% endmacro %}
+
+{% macro select(name, options, selected, label=None, blank=None) %}
+<select name="{{ name }}" {% if label %}aria-label="{{ label }}"{% endif %}>
+  {% if blank is not none %}<option value="">{{ blank }}</option>{% endif %}
+  {% for o in options %}<option value="{{ o }}" {% if o == selected %}selected{% endif %}>{{ o }}</option>{% endfor %}
+</select>
+{% endmacro %}

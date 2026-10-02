@@ -28,3 +28,7 @@ venv/
 # See docs/ARCHITECTURE.md § Partition & cross-talk rules.
 memory/data/user/
 memory/data/session/
+
+# Memory hub local state
+hub/data/
+*.egg-info/

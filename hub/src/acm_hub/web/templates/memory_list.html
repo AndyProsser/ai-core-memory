@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% from "_macros.html" import select %}
+{% block title %}Memory{% endblock %}
+{% block content %}
+<header class="page">
+  <div><h1>Memory</h1><p class="muted">What's remembered, across your projects.</p></div>
+  <a class="btn primary" href="/memory/new">+ New record</a>
+</header>
+<form class="filters" method="get" action="/memory" role="search"
+      hx-get="/memory" hx-target="#results" hx-trigger="input changed delay:250ms from:[data-search], change from:select" hx-push-url="true">
+  <input type="search" name="q" value="{{ f.q }}" placeholder="Search records…" aria-label="Search records" data-search>
+  {{ select('tier', ['core','associated'], f.tier, 'Tier', 'Any tier') }}
+  {{ select('type', types, f.type, 'Type', 'Any type') }}
+  {{ select('scope', ['project','team','user'], f.scope, 'Scope', 'Any scope') }}
+  {{ select('confidence', confidences, f.confidence, 'Confidence', 'Any confidence') }}
+  {{ select('status', ['active','stale','superseded','archived','all'], f.status, 'Status') }}
+  {% if topics %}{{ select('topic', topics, f.topic, 'Topic', 'Any topic') }}{% endif %}
+  {% if projects %}{{ select('project', projects, f.project, 'Project', 'Any project') }}{% endif %}
+  <noscript><button type="submit">Filter</button></noscript>
+</form>
+<div id="results">{% include "_memory_results.html" %}</div>
+{% endblock %}

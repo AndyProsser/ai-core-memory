@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}Import preview{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Import preview</h1><p class="muted">Dry run — nothing has been changed yet.</p></div></header>
+{% set s = report.summary %}
+<div class="card"><strong>{{ s.create }}</strong> to create · <strong>{{ s.update }}</strong> to update · {{ s.unchanged }} unchanged ·
+  <strong>{{ s.conflict }}</strong> held for review · <strong>{{ s.error }}</strong> skipped{% if s.inbox %} · {{ s.inbox }} inbox item(s){% endif %}</div>
+<table><thead><tr><th>Record</th><th>Result</th><th>Note</th></tr></thead><tbody>
+  {% for i in report.items %}<tr><td><code>{{ i.name }}</code><div class="small muted">{{ i.path }}</div></td>
+    <td><span class="badge {{ 'stale' if i.action in ('conflict','error') else '' }}">{{ i.action }}</span></td><td class="small">{{ i.detail }}</td></tr>{% endfor %}
+</tbody></table>
+<form method="post" action="/data/import/apply" class="actions">
+  {{ csrf() }}<input type="hidden" name="stash" value="{{ stash }}">
+  <button class="primary" type="submit" {% if not (s.create or s.update or s.conflict or s.inbox) %}disabled{% endif %}>Apply import</button>
+  <a class="btn" href="/data">Cancel</a>
+</form>
+{% endblock %}

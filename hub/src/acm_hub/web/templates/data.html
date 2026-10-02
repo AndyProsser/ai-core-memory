@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}Data{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Data</h1><p class="muted">Your memory, readable and portable. Nothing here needs an AI or the network.</p></div></header>
+
+<h2>Export</h2>
+<form method="get" action="/data/export" class="card">
+  <div class="row">
+    <div><label for="scope" style="margin-top:0">Scope</label><select id="scope" name="scope"><option value="">Everything I can see</option><option>user</option><option>team</option><option>project</option></select></div>
+    <div><label for="project" style="margin-top:0">Project</label><select id="project" name="project"><option value="">All projects</option>{% for p in projects %}<option>{{ p }}</option>{% endfor %}</select></div>
+  </div>
+  <p><label class="inline"><input type="checkbox" name="history" value="1"> Include revision history</label><br>
+     <label class="inline"><input type="checkbox" name="inbox" value="1"> Include un-harvested inbox items</label></p>
+  <div class="actions"><button class="primary" type="submit">Download .zip</button></div>
+  <p class="hint">Markdown files with YAML frontmatter, plus <code>MEMORY.md</code> indexes and a manifest. The same on the host: <code>acm export --out ./backup</code>.</p>
+</form>
+
+<h2>Import</h2>
+<form method="post" action="/data/import" enctype="multipart/form-data" class="card">
+  {{ csrf() }}
+  <label for="file" style="margin-top:0">An export .zip, or a single record .md</label>
+  <input id="file" type="file" name="file" accept=".zip,.md" required>
+  <div class="actions"><button class="primary" type="submit">Preview import</button></div>
+  <p class="hint">You always see a dry-run report first; nothing changes until you press Apply. Records that would overwrite an established or newer record are held for review instead.</p>
+</form>
+
+<h2>Backups</h2>
+<p>Schedule <code>acm export --with-history --out /backups/memory-$(date +%F)</code> from cron or a systemd timer. It reads the database directly, so it works even when the hub is stopped.</p>
+{% endblock %}

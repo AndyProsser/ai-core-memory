@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}Review{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Review</h1><p class="muted">Everything waiting on a human decision.</p></div></header>
+
+<h2>Import conflicts {% if pending %}({{ pending|length }}){% endif %}</h2>
+{% if pending %}
+<ul class="records">{% for c in pending %}<li><a class="title" href="/memory/{{ c.memory_record_id }}">{{ names[c.memory_record_id] }}</a>
+  <p class="desc">{{ c.change_note }} · {{ c.changed_at|datetime }}</p></li>{% endfor %}</ul>
+{% else %}<p class="muted">No conflicts. Imports that would overwrite an established or newer record appear here.</p>{% endif %}
+
+<h2>Inbox {% if items %}({{ items|length }}){% endif %}</h2>
+{% if items %}
+<ul class="records">
+  {% for it in items %}
+  <li>
+    <strong>{{ it.title }}</strong> <span class="badge">{{ it.source }}</span>
+    {% if it.body %}<p class="desc">{{ it.body[:240] }}{{ '…' if it.body|length > 240 }}</p>{% endif %}
+    {% if it.external_ref %}<p class="small muted">From: {{ it.external_ref }}</p>{% endif %}
+    <div class="actions" style="margin-top:.4rem">
+      <a class="btn" href="/memory/new?inbox_id={{ it.id }}">Turn into record</a>
+      <form method="post" action="/inbox/{{ it.id }}/dismiss">{{ csrf() }}<button>Dismiss</button></form>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<div class="empty"><p><strong>Inbox is empty.</strong></p><p>Press <kbd>c</kbd> to capture a snippet or idea; AI clients can add here too.</p></div>{% endif %}
+
+<h2>Proposals</h2>
+<p class="muted">Consolidation proposals (merge, supersede, promote, mark stale) arrive with the consolidation pass in the next phase. Until then, review and edit records directly in <a href="/memory">Memory</a>.</p>
+{% endblock %}

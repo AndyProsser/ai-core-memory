@@ -1,0 +1,16 @@
+{% from "_macros.html" import record_row %}
+{% if total == 0 %}
+  <div class="empty"><p><strong>No records match.</strong></p>
+    <p>Records appear here when you add one, import an export, or an AI client writes one through the hub.</p>
+    <p><a class="btn" href="/memory/new">Add the first record</a> <a class="btn" href="/data">Import</a></p></div>
+{% else %}
+  {% if core %}
+  <div class="group-title"><span>Core · loaded in every session</span>
+    <span>{{ core_used }} / {{ core_budget }} tokens <span class="meter {% if core_used > core_budget %}over{% endif %}" role="img" aria-label="{{ core_pct }}% of core budget used"><span style="width:{{ core_pct }}%"></span></span></span></div>
+  <ul class="records">{% for v in core %}{{ record_row(v) }}{% endfor %}</ul>
+  {% endif %}
+  {% if associated %}
+  <div class="group-title"><span>Associated · pulled in by task ({{ associated|length }})</span></div>
+  <ul class="records">{% for v in associated %}{{ record_row(v) }}{% endfor %}</ul>
+  {% endif %}
+{% endif %}

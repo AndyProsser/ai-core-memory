@@ -1,0 +1,63 @@
+{% from "_macros.html" import csrf %}
+<!doctype html>
+<html lang="en" data-pref="{{ theme }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+  {% if user %}<meta name="csrf" content="{{ csrf_token }}">{% endif %}
+  <title>{% block title %}Memory hub{% endblock %} · Memory hub</title>
+  <script src="/static/theme-init.js"></script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body{% if user %} hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'{% endif %}>
+{% if user %}
+<div class="shell">
+  <nav class="rail" aria-label="Main">
+    <div class="brand">◆ Memory hub</div>
+    {% set path = request.url.path %}
+    <a class="nav" href="/memory" {% if path.startswith('/memory') %}aria-current="page"{% endif %}>Memory</a>
+    <a class="nav" href="/review" {% if path.startswith('/review') %}aria-current="page"{% endif %}>Review{% if inbox_count %} <span class="count" aria-label="{{ inbox_count }} waiting">{{ inbox_count }}</span>{% endif %}</a>
+    <a class="nav" href="/focus" {% if path.startswith('/focus') %}aria-current="page"{% endif %}>Focus</a>
+    <a class="nav" href="/data" {% if path.startswith('/data') %}aria-current="page"{% endif %}>Data</a>
+    <a class="nav" href="/settings" {% if path.startswith('/settings') %}aria-current="page"{% endif %}>Settings</a>
+    <div class="rail-bottom">
+      <button type="button" data-open-capture>+ Capture <kbd>c</kbd></button>
+      <div class="theme-switch" role="group" aria-label="Theme">
+        <button type="button" data-theme-set="system" aria-pressed="false" title="Follow system">Auto</button>
+        <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+      </div>
+      <form method="post" action="/logout">{{ csrf() }}<button class="link small" type="submit">Sign out {{ user.email }}</button></form>
+    </div>
+  </nav>
+  <main id="main">
+    {% if notice %}<div class="notice" role="status">{{ notice }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<dialog id="capture-dialog" aria-labelledby="cap-title">
+  <form method="post" action="/inbox">
+    {{ csrf() }}<input type="hidden" name="next" value="{{ request.url.path }}">
+    <h2 id="cap-title" style="margin-top:0">Quick capture</h2>
+    <p class="hint">A snippet, idea, or link. It goes to the inbox; the next consolidation pass turns it into memory (or doesn't).</p>
+    <label for="cap-t">Title</label><input id="cap-t" type="text" name="title" maxlength="200" required>
+    <label for="cap-b">Details <span class="muted">(optional)</span></label><textarea id="cap-b" name="body" style="min-height:6rem"></textarea>
+    <input type="hidden" name="scope" value="user">
+    <div class="actions"><button class="primary" type="submit">Capture</button><button type="button" data-close-dialog>Cancel</button></div>
+  </form>
+</dialog>
+<dialog id="help-dialog" aria-labelledby="help-title">
+  <h2 id="help-title" style="margin-top:0">Keyboard shortcuts</h2>
+  <p><kbd>/</kbd> search · <kbd>c</kbd> quick capture · <kbd>g</kbd> then <kbd>m</kbd> Memory, <kbd>r</kbd> Review, <kbd>f</kbd> Focus, <kbd>d</kbd> Data · <kbd>?</kbd> this help</p>
+  <div class="actions"><button type="button" data-close-dialog>Close</button></div>
+</dialog>
+{% else %}
+<main class="narrow">{% block public %}{% endblock %}</main>
+{% endif %}
+<script src="/static/htmx.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
