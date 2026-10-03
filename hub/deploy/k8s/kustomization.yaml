@@ -1,0 +1,8 @@
+# kubectl apply -k hub/deploy/k8s   (after creating the memory-hub-secrets Secret — see secret.example.yaml)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - configmap.yaml
+  - statefulset.yaml
+  - service.yaml
+  - backup-cronjob.yaml

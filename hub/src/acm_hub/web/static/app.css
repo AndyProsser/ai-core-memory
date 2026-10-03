@@ -156,3 +156,6 @@ ol.timeline li::before { content: ""; position: absolute; left: -1.35rem; top: .
 ol.timeline li[aria-current="true"]::before { background: var(--accent); border-color: var(--accent); }
 ol.timeline .when { color: var(--text-muted); font-size: .85rem; margin-right: .5rem; font-variant-numeric: tabular-nums; }
 .wrap { overflow-wrap: anywhere; word-break: break-word; }
+
+form.stack { display: grid; gap: .5rem; } details > summary { cursor: pointer; color: var(--accent); } details[open] > summary { margin-bottom: .5rem; }
+.tabs { flex-wrap: wrap; } select[aria-label] { width: auto; max-width: 100%; } td .actions.flush select { min-width: 9rem; }

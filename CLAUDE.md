@@ -2,7 +2,7 @@
 
 `ai-core-memory` defines an open, cross-platform memory format and consolidation
 process for AI assistants (the "dream cycle" — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
-This repo is spec-and-skill first, with a working Phase 1 hub in [`hub/`](hub/README.md)
+This repo is spec-and-skill first, with a working hub in [`hub/`](hub/README.md)
 (FastAPI + SQLite + MCP + web UI + `acm` CLI). The design docs and the `dream` skill remain
 the source of truth; code in `hub/` implements them, it doesn't redefine them.
 
@@ -49,8 +49,8 @@ are load-bearing for everything else in the repo.
 
 ## Scope of changes
 
-Phases 1–3 of the hub are built (core, lifecycle/consolidation, plugins) (see ARCHITECTURE.md → Roadmap for what is and isn't). Don't
-start on later roadmap phases (teams UI, the Claude Code plugin)
+Phases 1–4 of the hub are built (core, lifecycle/consolidation, plugins, teams + distribution) (see ARCHITECTURE.md → Roadmap for what is and isn't). Don't
+start on later roadmap items (MCP OAuth, embeddings, Postgres, …)
 unless explicitly asked — "the design is decided" and "go build it" are separate asks. When
 working in `hub/`, run `pip install -e '.[dev]'` and `pytest` there; every change needs
 tests, and security-relevant behaviour (auth, tokens, access, import/export) needs a test

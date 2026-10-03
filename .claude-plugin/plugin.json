@@ -1,0 +1,32 @@
+{
+  "name": "ai-core-memory",
+  "version": "0.4.0",
+  "description": "Long-term memory for AI assistants: the dream consolidation skill, hub sync, and the memory hub's MCP tools.",
+  "author": { "name": "Andy Prosser" },
+  "license": "MIT",
+  "homepage": "https://github.com/AndyProsser/ai-core-memory",
+  "repository": "https://github.com/AndyProsser/ai-core-memory",
+  "skills": ["./.claude/skills/"],
+  "userConfig": {
+    "hub_url": {
+      "type": "string",
+      "title": "Memory hub MCP URL",
+      "description": "Where your hub's MCP endpoint lives, e.g. https://memory.example.com/mcp/",
+      "required": true
+    },
+    "hub_token": {
+      "type": "string",
+      "title": "Memory hub API token",
+      "description": "A per-user token minted in the hub (Settings → API tokens). Scope it to the projects you need.",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "mcpServers": {
+    "memory": {
+      "type": "http",
+      "url": "${user_config.hub_url}",
+      "headers": { "Authorization": "Bearer ${user_config.hub_token}" }
+    }
+  }
+}

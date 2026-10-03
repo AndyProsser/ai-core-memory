@@ -61,15 +61,14 @@ AGENTS.md               pointer to CLAUDE.md for non-Claude coding assistants
 
 ## Status
 
-Early / spec stage. What exists today: the scope/type/confidence model for a memory
-record, and a `/dream` skill you can run manually inside Claude Code or Claude.ai to
-consolidate a session into memory files in this repo. What's roadmap: a small,
-self-hosted **memory hub** — Python, FastAPI, SQLite — with per-user/team accounts and
-API tokens, that aggregates project/team memory across every repo you work in so
-cross-project questions don't require having every repo cloned side by side. The design
-is settled (see [docs/ARCHITECTURE.md § Memory hub](docs/ARCHITECTURE.md#memory-hub-cross-project-store));
-no code exists yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#roadmap) for the
-full list.
+Working, self-hostable, not yet battle-tested. The memory model and the `dream` skill work with plain files
+alone. The **memory hub** in [`hub/`](hub/README.md) — Python, FastAPI, SQLite, MCP, web UI (light/dark) and the
+offline `acm` CLI — covers accounts with OIDC SSO and per-user API tokens, teams and project visibility,
+consolidation (reinforcement, supersession, decay, a human-approved proposal queue), plugins (Obsidian and
+Memos in; Slack/Teams/ntfy/webhook out), a Claude Code plugin, `acm compile` for tools that only read an
+instruction file, and k3s/k8s manifests. Not yet verified: the container image build and a live Claude Code
+session using the plugin's skills. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#roadmap) for what is and
+isn't done.
 
 ## Getting started (Claude Code / Claude.ai today)
 

@@ -1,4 +1,4 @@
-# Memory hub (Phase 1)
+# Memory hub
 
 The self-hostable memory hub: a central store for AI-assistant memory with a web UI, an MCP
 endpoint, and an offline CLI. Design: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) ·
@@ -20,7 +20,7 @@ One Python process, one SQLite file. No external services.
 | `acm` CLI: setup, users, tokens, list/show/edit, export, import, consolidate, review, doctor, reindex | built |
 | Lifecycle: reinforcement, supersession + timeline, decay; proposal queue + Review screen; `acm consolidate` / `acm review`; scheduler | built (Phase 2) |
 | Plugins: event outbox + dispatcher, Apprise (Slack/Teams/ntfy/email) + signed webhook sinks, Obsidian + Memos sources, Plugins screen, `acm plugins` | built (Phase 3) |
-| Teams/members UI, Claude Code plugin | Phase 4 |
+| Teams/users/projects roles + UI + CLI, Claude Code plugin, `hub-sync` skill, `acm compile`, k8s manifests | built (Phase 4) |
 
 ## Run it
 

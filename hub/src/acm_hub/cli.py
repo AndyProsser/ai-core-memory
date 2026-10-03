@@ -14,7 +14,8 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlmodel import Session, col, select
 
-from . import __version__
+from . import __version__, orgs
+from . import compile as compile_mod
 from . import proposals as proposals_mod
 from .access import AccessError, NotFound, Principal, principal_for_user
 from .auth import has_admin, issue_setup_code, mint_token
@@ -25,12 +26,13 @@ from .exportimport import (
     export_files,
     import_files,
     new_export_name,
+    parse_record,
     read_dir,
     read_zip,
     to_zip,
     write_dir,
 )
-from .models import ApiToken, InstanceSettings, MemoryRecord, Project, User, utcnow
+from .models import ApiToken, InstanceSettings, MemoryRecord, Project, Team, User, utcnow
 from .records import (
     Conflict,
     RecordIn,
@@ -135,7 +137,8 @@ def cmd_user_list(args: argparse.Namespace) -> int:
         for u in db.exec(select(User).order_by(col(User.created_at))).all():
             kind = "admin" if u.is_admin else "member"
             sso = "sso" if u.auth_provider == "oidc" else "local"
-            print(f"{u.email}\t{kind}\t{sso}\t{'linked' if u.external_id else ''}")
+            state = "active" if u.is_active else "deactivated"
+            print(f"{u.email}\t{kind}\t{sso}\t{state}\t{'linked' if u.external_id else ''}")
     return 0
 
 
@@ -483,6 +486,194 @@ def cmd_plugins(args: argparse.Namespace) -> int:
     return 0
 
 
+def _user(db: Session, email: str) -> User:
+    user = db.exec(select(User).where(User.email == email.strip().lower())).first()
+    if not user:
+        raise CliError(f"No user {email!r} (see `acm user list`).")
+    return user
+
+
+def cmd_user_admin(args: argparse.Namespace) -> int:
+    with _open() as db:
+        actor = _actor(db, args.user)
+        user = _user(db, args.email)
+        if args.ucmd in ("deactivate", "activate"):
+            orgs.set_user_active(db, actor, user, args.ucmd == "activate")
+            db.commit()
+            print(
+                f"Deactivated {user.email}: signed out everywhere, tokens revoked. Their memory is untouched."
+                if args.ucmd == "deactivate"
+                else f"Reactivated {user.email}. Revoked tokens stay revoked; they can mint new ones."
+            )
+        elif args.ucmd in ("make-admin", "remove-admin"):
+            orgs.set_user_admin(db, actor, user, args.ucmd == "make-admin")
+            db.commit()
+            print(f"{user.email} is {'now' if args.ucmd == 'make-admin' else 'no longer'} an admin.")
+        else:  # reset-password
+            temp = orgs.reset_password(db, actor, user)
+            db.commit()
+            print(f"Temporary password for {user.email} (shown once; they are signed out everywhere):")
+            print(temp)
+    return 0
+
+
+def _team(db: Session, slug: str):  # noqa: ANN202
+    try:
+        return orgs.get_team(db, slug)
+    except NotFound as e:
+        raise CliError(f"No team {slug!r} (see `acm team list`).") from e
+
+
+def cmd_team(args: argparse.Namespace) -> int:
+    with _open() as db:
+        actor = _actor(db, args.user)
+        sub = args.tcmd
+        if sub in (None, "list"):
+            for t in orgs.visible_teams(db, actor):
+                role = orgs.team_role(db, actor.user_id, t.id) or "not a member"
+                print(f"{t.slug}\t{t.name}\t{role}")
+            return 0
+        if sub == "create":
+            t = orgs.create_team(db, actor, args.name, args.slug, _user(db, args.owner))
+            db.commit()
+            print(f"Created team {t.slug} with {args.owner} as its owner.")
+            return 0
+        team = _team(db, args.slug)
+        if sub == "show":
+            if orgs.team_role(db, actor.user_id, team.id) is None:
+                raise AccessError("Only a team's members can see who is on it.")
+            for u, role in orgs.members(db, team):
+                print(f"{u.email}\t{role}")
+        elif sub == "add":
+            orgs.add_member(db, actor, team, _user(db, args.email), args.role)
+            db.commit()
+            print(f"Added {args.email} to {team.slug} as {args.role}.")
+        elif sub == "set-role":
+            orgs.set_member_role(db, actor, team, _user(db, args.email), args.role)
+            db.commit()
+            print(f"{args.email} is now {args.role} of {team.slug}.")
+        elif sub == "remove":
+            orgs.remove_member(db, actor, team, _user(db, args.email))
+            db.commit()
+            print(
+                f"Removed {args.email} from {team.slug}. Their access to the team's projects ended immediately."
+            )
+        elif sub == "delete":
+            if args.confirm != team.slug:
+                raise CliError(f"Deleting a team is permanent. Re-run with --confirm {team.slug}.")
+            n = orgs.delete_team(db, actor, team, purge_archived=args.purge_archived)
+            db.commit()
+            print(
+                f"Deleted team {team.slug}." + (f" Permanently removed {n} archived record(s)." if n else "")
+            )
+    return 0
+
+
+def cmd_project(args: argparse.Namespace) -> int:
+    with _open() as db:
+        actor = _actor(db, args.user)
+        sub = args.pcmd
+        if sub in (None, "list"):
+            for pr in orgs.visible_projects(db, actor):
+                team = db.get(Team, pr.team_id).slug if pr.team_id else "-"
+                print(f"{pr.slug}\t{pr.visibility}\t{team}")
+            return 0
+        team = _team(db, args.team) if getattr(args, "team", None) else None
+        if sub == "create":
+            pr = orgs.create_project(db, actor, args.slug, visibility=args.visibility, team=team)
+            db.commit()
+            print(f"Created project {pr.slug} ({pr.visibility}).")
+            return 0
+        pr = db.exec(select(Project).where(Project.slug == args.slug)).first()
+        if pr is None or pr.id not in {p.id for p in orgs.visible_projects(db, actor)}:
+            raise CliError(f"No project {args.slug!r} (see `acm project list`).")
+        if sub == "set":
+            orgs.update_project(db, actor, pr, visibility=args.visibility, team=team)
+            db.commit()
+            print(f"{pr.slug} is now {pr.visibility}.")
+        elif sub == "delete":
+            if args.confirm != pr.slug:
+                raise CliError(f"Deleting a project is permanent. Re-run with --confirm {pr.slug}.")
+            n = orgs.delete_project(db, actor, pr, purge_archived=args.purge_archived)
+            db.commit()
+            print(
+                f"Deleted project {pr.slug}." + (f" Permanently removed {n} archived record(s)." if n else "")
+            )
+    return 0
+
+
+def cmd_compile(args: argparse.Namespace) -> int:
+    """Turn core + rule records into the instruction file another AI tool reads. Offline, deterministic."""
+    targets = list(compile_mod.TARGETS) if args.target == "all" else [args.target]
+    projects = set(args.project or [])
+    if args.from_dir:
+        items = []
+        files = read_dir(Path(args.from_dir))
+        for path, data in sorted(files.items()):
+            if (
+                not path.endswith(".md")
+                or path.endswith("MEMORY.md")
+                or path.startswith(("_history", "_inbox"))
+            ):
+                continue
+            try:
+                parsed = parse_record(data.decode("utf-8"), path_hint=path)
+            except (ValidationFailed, UnicodeDecodeError):
+                continue  # not a record (README, template); `acm import` is the place to report those
+            d = parsed.data
+            items.append(
+                compile_mod.Item(
+                    name=d.name or "",
+                    description=d.description or "",
+                    body=d.body or "",
+                    type=d.type or "",
+                    scope=d.scope or "",
+                    tier=d.tier or "associated",
+                    confidence=d.confidence or "observed",
+                    status=d.status or "active",
+                    project=d.project,
+                )
+            )
+    else:
+        with _open() as db:
+            p = _actor(db, args.user)
+            items = [
+                compile_mod.Item(
+                    name=r.name,
+                    description=r.description,
+                    body=r.body,
+                    type=r.type,
+                    scope=r.scope,
+                    tier=r.tier,
+                    confidence=r.confidence,
+                    status=r.status,
+                    project=project_slug(db, r),
+                )
+                for r in list_records(db, p, status="active", limit=100_000)
+            ]
+    chosen = compile_mod.select_items(
+        items,
+        projects=projects,
+        include_user_scope=args.include_user_scope,
+        include_observed=args.include_observed,
+    )
+    out_dir = Path(args.out or ".")
+    for key in targets:
+        target = compile_mod.TARGETS[key]
+        if args.stdout:
+            print(compile_mod.render_target(target, chosen), end="")
+            continue
+        dest = compile_mod.write_target(
+            out_dir,
+            target,
+            chosen,
+            include_user_scope=args.include_user_scope,
+            allow_in_repo=args.allow_in_repo,
+        )
+        print(f"Wrote {len(chosen)} record(s) to {dest} ({target.note})")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -652,6 +843,91 @@ def build_parser() -> argparse.ArgumentParser:
     sv = add("serve", cmd_serve, "run the hub (web UI, REST, MCP)", user=False)
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
+
+    for name in ("deactivate", "activate", "make-admin", "remove-admin", "reset-password"):
+        ua = usub.add_parser(
+            name,
+            help={
+                "deactivate": "block sign-in and revoke tokens (memory is kept)",
+                "activate": "allow a deactivated user to sign in again",
+                "make-admin": "grant the admin platform role (no memory access comes with it)",
+                "remove-admin": "remove the admin role (the last admin can't be removed)",
+                "reset-password": "set a one-time temporary password (local accounts)",
+            }[name],
+        )
+        ua.set_defaults(fn=cmd_user_admin)
+        ua.add_argument("email")
+        ua.add_argument("--as", dest="user", metavar="EMAIL", help=f"act as this admin ({EMAIL_HINT})")
+
+    tm = sub.add_parser("team", help="manage teams and their members")
+    tm.set_defaults(fn=cmd_team, tcmd=None, user=None)
+    tmsub = tm.add_subparsers(dest="tcmd")
+    tmsub.add_parser("list", help="teams you can see (default)")
+    tmc = tmsub.add_parser("create", help="create a team with a first owner (admin)")
+    tmc.add_argument("slug")
+    tmc.add_argument("--name", required=True)
+    tmc.add_argument("--owner", required=True, metavar="EMAIL")
+    tms = tmsub.add_parser("show", help="list a team's members (members only)")
+    tms.add_argument("slug")
+    for name, role_req in (("add", False), ("set-role", True), ("remove", None)):
+        tp = tmsub.add_parser(name, help=f"{name.replace('-', ' ')} a team member (the team's owners)")
+        tp.add_argument("slug")
+        tp.add_argument("email")
+        if role_req is not None:
+            tp.add_argument("--role", choices=["member", "owner"], required=role_req, default="member")
+    tmd = tmsub.add_parser("delete", help="delete a team (it must have no live projects or records)")
+    tmd.add_argument("slug")
+    tmd.add_argument("--confirm", default="", metavar="SLUG", help="type the slug to confirm")
+    tmd.add_argument(
+        "--purge-archived", action="store_true", help="also permanently delete its archived records"
+    )
+
+    for leaf in tmsub.choices.values():
+        leaf.add_argument("--as", dest="user", metavar="EMAIL", help=f"act as this user ({EMAIL_HINT})")
+
+    pj = sub.add_parser("project", help="manage projects and who can see them")
+    pj.set_defaults(fn=cmd_project, pcmd=None, user=None)
+    pjsub = pj.add_subparsers(dest="pcmd")
+    pjsub.add_parser("list", help="projects you can see (default)")
+    for name in ("create", "set"):
+        pp = pjsub.add_parser(name, help=f"{name} a project")
+        pp.add_argument("slug")
+        pp.add_argument(
+            "--visibility", choices=["private", "team", "public"], required=name == "set", default="private"
+        )
+        pp.add_argument("--team", metavar="SLUG", help="owning team (for team visibility)")
+    pjd = pjsub.add_parser("delete", help="delete a project (it must have no live records)")
+    pjd.add_argument("slug")
+    pjd.add_argument("--confirm", default="", metavar="SLUG", help="type the slug to confirm")
+    pjd.add_argument(
+        "--purge-archived", action="store_true", help="also permanently delete its archived records"
+    )
+
+    for leaf in pjsub.choices.values():
+        leaf.add_argument("--as", dest="user", metavar="EMAIL", help=f"act as this user ({EMAIL_HINT})")
+
+    cp = add("compile", cmd_compile, "write core + rule memory into another AI tool's instruction file")
+    cp.add_argument("target", choices=[*compile_mod.TARGETS, "all"], help="which tool's file to generate")
+    cp.add_argument(
+        "--project", action="append", metavar="SLUG", help="include this project's records (repeatable)"
+    )
+    cp.add_argument(
+        "--from-dir",
+        metavar="DIR",
+        help="read plain record files (an export or memory/data) instead of the hub",
+    )
+    cp.add_argument("--out", metavar="DIR", help="directory to write into (default: current directory)")
+    cp.add_argument("--stdout", action="store_true", help="print instead of writing a file")
+    cp.add_argument(
+        "--include-user-scope", action="store_true", help="also include personal (user-scope) records"
+    )
+    cp.add_argument(
+        "--include-observed", action="store_true", help="also include unconfirmed (observed) records"
+    )
+    cp.add_argument(
+        "--allow-in-repo", action="store_true", help="allow writing user-scope memory inside a git work tree"
+    )
+
     return ap
 
 

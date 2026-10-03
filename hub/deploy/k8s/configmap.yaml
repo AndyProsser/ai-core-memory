@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: memory-hub-config
+  labels: { app.kubernetes.io/name: memory-hub }
+data:
+  MEMORY_HUB_DB_PATH: /data/hub.sqlite3
+  # The URL people (and your OIDC provider) use to reach the hub; must match the Ingress host.
+  MEMORY_HUB_PUBLIC_URL: https://memory.example.com
+  # true only when a TLS-terminating proxy/ingress sits in front (it then trusts X-Forwarded-*).
+  MEMORY_HUB_TRUST_PROXY: "true"
+  MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS: "24"
+  MEMORY_HUB_PLUGINS: "true"

@@ -1,0 +1,9 @@
+{% macro settings_tabs(active) %}
+<nav class="tabs" aria-label="Settings sections">
+  <a href="/settings" {% if active == 'account' %}aria-current="page"{% endif %}>Account</a>
+  <a href="/settings/projects" {% if active == 'projects' %}aria-current="page"{% endif %}>Projects</a>
+  {% if deployment_mode != 'solo' %}<a href="/settings/teams" {% if active == 'teams' %}aria-current="page"{% endif %}>Teams</a>{% endif %}
+  {% if user.is_admin %}<a href="/settings/users" {% if active == 'users' %}aria-current="page"{% endif %}>Users</a>
+  <a href="/plugins" {% if active == 'plugins' %}aria-current="page"{% endif %}>Plugins</a>{% endif %}
+</nav>
+{% endmacro %}

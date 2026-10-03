@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% from "_settings_nav.html" import settings_tabs with context %}
+{% block title %}{{ team.name }}{% endblock %}
+{% block content %}
+<header class="page"><div><h1>{{ team.name }}</h1><p class="muted"><a href="/settings/teams">← Teams</a> · {{ team.slug }}{% if role %} · you are {{ 'an owner' if role == 'owner' else 'a member' }}{% endif %}</p></div></header>
+
+{% if role %}
+<h2>People</h2>
+<table>
+  <thead><tr><th>Account</th><th>Role</th><th></th></tr></thead>
+  <tbody>
+  {% for u, r in members %}<tr>
+    <td>{{ u.email }}{% if not u.is_active %} <span class="badge stale">deactivated</span>{% endif %}</td>
+    <td>{% if role == 'owner' %}
+      <form method="post" action="/settings/teams/{{ team.slug }}/members/{{ u.id }}/role" class="actions flush">{{ csrf() }}
+        <select name="role" aria-label="Role of {{ u.email }}"><option value="member" {% if r == 'member' %}selected{% endif %}>Member</option><option value="owner" {% if r == 'owner' %}selected{% endif %}>Owner</option></select>
+        <button type="submit">Change</button></form>
+      {% else %}<span class="badge {{ 'established' if r == 'owner' else '' }}">{{ r }}</span>{% endif %}</td>
+    <td>{% if role == 'owner' %}<form method="post" action="/settings/teams/{{ team.slug }}/members/{{ u.id }}/remove">{{ csrf() }}<button class="danger" type="submit">Remove</button></form>{% endif %}</td>
+  </tr>{% endfor %}
+  </tbody>
+</table>
+
+{% if role == 'owner' %}
+<h2>Add someone</h2>
+<form method="post" action="/settings/teams/{{ team.slug }}/members" class="card">
+  {{ csrf() }}
+  <div class="row">
+    <div><label for="email">Account</label><input id="email" type="text" name="email" list="cands" required placeholder="name@example.com" autocomplete="off">
+      <datalist id="cands">{% for c in candidates %}<option value="{{ c.email }}">{% endfor %}</datalist>
+      <p class="hint">They need an account first; an admin creates those in Settings → Users.</p></div>
+    <div><label for="role">Role</label><select id="role" name="role"><option value="member">Member — read and write the team's memory</option><option value="owner">Owner — also manages members and projects</option></select></div>
+  </div>
+  <div class="actions"><button class="primary" type="submit">Add to team</button></div>
+</form>
+{% endif %}
+
+<h2>Projects</h2>
+{% if projects %}<ul class="records">{% for p in projects %}<li><a class="title" href="/memory?project={{ p.slug }}">{{ p.slug }}</a> <span class="badge">{{ p.visibility }}</span></li>{% endfor %}</ul>
+{% else %}<p class="muted">None yet. {% if role == 'owner' %}Create one under <a href="/settings/projects">Projects</a>.{% endif %}</p>{% endif %}
+{% else %}
+<div class="warning small">You're an admin, not a member, of this team: you can delete it but you can't see who is on it or what it remembers.</div>
+{% endif %}
+
+{% if user.is_admin %}
+<h2>Delete team</h2>
+<form method="post" action="/settings/teams/{{ team.slug }}/delete" class="card stack">
+  {{ csrf() }}
+  <p class="hint">A team that still owns projects can't be deleted. If it has team-scope memory, every record must be archived first (export it with <code>acm export --scope team</code>); then you confirm the purge below.</p>
+  <label class="inline"><input type="checkbox" name="purge" value="1"> Permanently delete its archived team-scope records and their history</label>
+  <input type="text" name="confirm" placeholder="Type “{{ team.slug }}” to confirm" autocomplete="off" aria-label="Type the team's short name to confirm">
+  <button class="danger" type="submit">Delete team</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% from "_macros.html" import csrf %}
+{% from "_settings_nav.html" import settings_tabs with context %}
 {% block title %}Plugins{% endblock %}
 {% block content %}
 <header class="page">
-  <div><h1>Plugins</h1><p class="muted">Bring notes in, send notifications out. <a href="/settings">← Settings</a></p></div>
+  <div><h1>Settings</h1><p class="muted">{{ user.email }} · admin</p></div>
 </header>
+{{ settings_tabs('plugins') }}
+<p class="muted">Bring notes in, send notifications out.</p>
 <div class="warning small">
   Plugins are Python code installed on this hub, so install only ones you trust. They only ever see what you allow below (nothing by default),
   secrets are never stored here — you give the <em>name</em> of an environment variable — and anything a plugin brings in lands in your inbox, never straight into memory.

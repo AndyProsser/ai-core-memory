@@ -1,0 +1,22 @@
+# Optional. Tokens and sessions must only travel over TLS, so terminate TLS here (cert-manager shown; k3s's
+# bundled Traefik also works — adjust ingressClassName). Not included in kustomization.yaml.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: memory-hub
+  labels: { app.kubernetes.io/name: memory-hub }
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt # change to your issuer
+spec:
+  ingressClassName: traefik # k3s default; use nginx etc. elsewhere
+  tls:
+    - hosts: [memory.example.com]
+      secretName: memory-hub-tls
+  rules:
+    - host: memory.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: memory-hub, port: { name: http } }

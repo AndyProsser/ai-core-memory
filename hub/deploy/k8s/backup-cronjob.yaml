@@ -1,0 +1,73 @@
+# Nightly consistent copy of the whole database (users, tokens, plugin config AND memory) using SQLite's online
+# backup API, so it is safe while the hub is running. Keeps the newest 14.
+#
+# The hub's volume is ReadWriteOnce, so this job is scheduled onto the same node as the hub (podAffinity below).
+# Backups land on their own volume; copy them off the cluster too — a backup on the same disk is not a backup.
+# For a memory-only, human-readable export that restores via `acm import`, run `acm export --with-history` in the
+# hub pod instead (see docs/DEPLOYMENT.md § Backups).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: memory-hub-backups
+  labels: { app.kubernetes.io/name: memory-hub }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 2Gi } }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: memory-hub-backup
+  labels: { app.kubernetes.io/name: memory-hub }
+spec:
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels: { app.kubernetes.io/name: memory-hub, statefulset.kubernetes.io/pod-name: memory-hub-0 }
+          containers:
+            - name: backup
+              image: ai-core-memory/hub:latest # same image as the hub: it already ships Python's sqlite3
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+              command:
+                - python
+                - -c
+                - |
+                  import glob, os, sqlite3, time
+                  dest = time.strftime("/backup/hub-%Y%m%dT%H%M%SZ.sqlite3", time.gmtime())
+                  src = sqlite3.connect("file:/data/hub.sqlite3?mode=ro", uri=True)
+                  out = sqlite3.connect(dest)
+                  with out:
+                      src.backup(out)
+                  out.close(); src.close()
+                  os.chmod(dest, 0o600)
+                  for old in sorted(glob.glob("/backup/hub-*.sqlite3"))[:-14]:
+                      os.remove(old)
+                  print("wrote", dest)
+              volumeMounts:
+                - { name: data, mountPath: /data } # read-write on purpose: a WAL database needs its -shm file even to read
+                - { name: backup, mountPath: /backup }
+          volumes:
+            - name: data
+              persistentVolumeClaim: { claimName: data-memory-hub-0 }
+            - name: backup
+              persistentVolumeClaim: { claimName: memory-hub-backups }

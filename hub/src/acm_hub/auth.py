@@ -87,7 +87,9 @@ def authenticate_bearer(
     if not limiter.allow(tok.id):
         raise AuthError(429, "Rate limit exceeded for this token.")
     user = session.get(User, tok.user_id)
-    if user is None:
+    if (
+        user is None or not user.is_active
+    ):  # a deactivated person's tokens stop working at once, even if not yet revoked
         raise AuthError(401, "Invalid token.")
     if tok.last_used_at is None or now - tok.last_used_at > _LAST_USED_GRANULARITY:
         tok.last_used_at = now
@@ -171,7 +173,7 @@ def lookup_web_session(
         session.commit()
         return None
     user = session.get(User, ws.user_id)
-    if user is None:
+    if user is None or not user.is_active:
         return None
     if now - ws.last_seen_at > timedelta(minutes=1):
         ws.last_seen_at = now

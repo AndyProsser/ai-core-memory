@@ -44,6 +44,9 @@ class User(SQLModel, table=True):
     auth_provider: str = "local"  # local | oidc
     external_id: str | None = Field(default=None, index=True)  # "<issuer>|<sub>" for OIDC
     is_admin: bool = False
+    is_active: bool = Field(
+        default=True, sa_column_kwargs={"server_default": "1"}
+    )  # False = can't sign in; tokens/sessions are revoked
     theme_preference: str = "system"  # system | light | dark
     created_at: NaiveDatetime = Field(default_factory=utcnow)
 

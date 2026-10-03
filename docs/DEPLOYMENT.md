@@ -112,49 +112,27 @@ the same file over a network filesystem, so:
   ARCHITECTURE.md) — don't try to get there by putting SQLite on shared network storage;
   it will lock up or corrupt.
 
-```yaml
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: memory-hub
-spec:
-  serviceName: memory-hub
-  replicas: 1
-  selector:
-    matchLabels: { app: memory-hub }
-  template:
-    metadata:
-      labels: { app: memory-hub }
-    spec:
-      containers:
-        - name: memory-hub
-          image: ai-core-memory/hub:latest
-          ports: [{ containerPort: 8000 }]
-          envFrom:
-            - secretRef: { name: memory-hub-secrets }
-          volumeMounts:
-            - name: data
-              mountPath: /data
-          readinessProbe:
-            httpGet: { path: /healthz, port: 8000 }
-  volumeClaimTemplates:
-    - metadata: { name: data }
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources: { requests: { storage: 1Gi } }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: memory-hub
-spec:
-  selector: { app: memory-hub }
-  ports: [{ port: 80, targetPort: 8000 }]
+Ready-to-edit manifests live in [`hub/deploy/k8s/`](../hub/deploy/k8s/): `configmap.yaml`,
+`statefulset.yaml` (one replica, non-root, probes on `/healthz`), `service.yaml`, `backup-cronjob.yaml`,
+plus `secret.example.yaml` and `ingress.example.yaml` (TLS — tokens and sessions must only travel over it).
+
+```bash
+kubectl create secret generic memory-hub-secrets \
+  --from-literal=MEMORY_HUB_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+# edit configmap.yaml (MEMORY_HUB_PUBLIC_URL), the image name, then:
+kubectl apply -k hub/deploy/k8s
+kubectl logs statefulset/memory-hub | grep "setup code"   # then finish first-run setup in the browser
 ```
 
-Secrets (`MEMORY_HUB_SECRET_KEY`, admin bootstrap credentials) belong in a Kubernetes
-`Secret`, not the manifest — same environment variables as the compose file, just
-sourced differently per platform.
+Secrets stay in a Kubernetes `Secret` (the manifests never contain one); the same variable names as the
+compose file. The nightly `CronJob` takes a consistent online copy of the whole database (SQLite's backup API)
+onto its own volume and keeps 14; it is scheduled next to the hub pod because the hub's volume is
+ReadWriteOnce. Copy backups off the cluster as well.
+
+**Verification status, honestly:** the YAML parses and the selectors, names and PVC references were checked by
+script, and the backup script was run against a live WAL database. The manifests were **not** applied to a
+cluster or schema-validated (`kubectl`/`kubeconform` weren't available), and the image they reference has not
+been built here. Treat them as a reviewed starting point.
 
 ## Backups
 
@@ -172,6 +150,5 @@ This is ordinary infrastructure, not a feature the hub itself needs to implement
 
 ## Status
 
-The Phase 1 hub is built (see [`hub/README.md`](../hub/README.md)); the container image and the
-k3s/k8s sections below are as described above — compose validated, image not yet built here,
-Kubernetes manifests unverified. See [Roadmap](ARCHITECTURE.md#roadmap) for what's next.
+The hub is built (see [`hub/README.md`](../hub/README.md)); the container image has not been built in the
+authoring environment — compose config validated, Kubernetes manifests structure-checked only. See [Roadmap](ARCHITECTURE.md#roadmap) for what's next.

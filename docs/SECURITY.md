@@ -107,6 +107,29 @@ owner, even inside a `public` project.
 | `owner`  | per-team      | Invite/remove members, promote/demote member↔owner within their own team, create/delete projects, set a project's visibility.       | Manage another team's membership or projects, override another user's private memory.                                                                                |
 | `member` | per-team      | Read/write `team`- and `project`-scope memory for projects their team can see, manage their own `user`-scope memory and API tokens. | Manage team membership or project visibility.                                                                                                                        |
 
+**As built (Phase 4), the admin boundary is deliberately tighter than "an owner with extra powers":**
+
+- An admin **creates a team only together with its first owner**, and from then on has no membership rights
+  over it: adding, removing or re-roling members is the team's owners' job. The admin sees a team's name, not
+  who is on it (the Teams page says so rather than hiding the gap).
+- An admin creates and **deactivates** accounts and resets local passwords (the temporary password is shown
+  once, in the response body — never in a URL — and the user is signed out everywhere). Deactivation blocks
+  sign-in, ends every session and revokes every token immediately, and disables the user's plugin instances;
+  it never deletes memory. The last active admin can't be deactivated or demoted, and you can't deactivate
+  yourself.
+- A team's last owner can't be removed or demoted, so a team can't be orphaned.
+- Project management follows the same rule: a personal project is managed by its owner, a team project by the
+  team's owners — and **not** by an admin.
+- Deleting a team or project never silently destroys memory: live records block deletion; archived-only
+  records are removed only after an explicit, typed confirmation (`--confirm <slug>` plus `--purge-archived`,
+  or the checkbox in the UI). Deleting a team is the one admin action that can purge content the admin can't
+  read, which is why it is gated this way.
+- Role changes take effect on the very next request: principals are loaded per request, not cached in the
+  session, so removing a member or deactivating a user cuts access without waiting for expiry.
+- API tokens can't perform any user, team or project administration, whatever the owning user's role.
+- Every one of these has a test that fails if the protection is removed (`hub/tests/test_orgs*.py`,
+  `test_org_ui.py`, `test_cli_orgs.py`).
+
 Admin sees exactly what a regular user with the same team memberships would see, plus
 account/team/auth administration — it's an operational role, not a backdoor into
 content. That said, be honest about the limit of any software-enforced boundary: on a

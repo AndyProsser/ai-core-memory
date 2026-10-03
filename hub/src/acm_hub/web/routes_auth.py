@@ -99,7 +99,7 @@ def login(
         )
     user = db.exec(select(User).where(User.email == email_n)).first()
     inst = db.get(InstanceSettings, 1)
-    allowed = bool(user and (user.is_admin or (inst and inst.local_login_enabled)))
+    allowed = bool(user and user.is_active and (user.is_admin or (inst and inst.local_login_enabled)))
     ok = verify_password(
         user.password_hash if user and allowed else None, password
     )  # constant-ish time for unknown users
@@ -310,6 +310,8 @@ async def oidc_callback(
         else:
             return bad("This hub is invite-only. Ask an admin to invite your email.", 403)
         db.flush()
+    if not user.is_active:
+        return bad("This account has been deactivated. Ask an admin.", 403)
     if reauth:
         found = lookup_web_session(db, settings, request.cookies.get(SESSION_COOKIE))
         if not found or found[0].id != user.id:

@@ -660,8 +660,7 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
 - [x] Container image + docker-compose per [docs/DEPLOYMENT.md](DEPLOYMENT.md) (image
       definition written; not built in the authoring environment — see DEPLOYMENT.md)
 - [ ] Session-authenticated JSON REST API for people (the UI and CLI cover every operation today)
-- [ ] Team/membership screens (the data model and access rules are in place and tested; there's
-      no UI to create teams or invite members yet — Phase 4)
+- [x] Team/membership screens (Phase 4)
 
 **Phase 2 — memory that learns** (built)
 
@@ -687,18 +686,19 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
 - [ ] Memos digest export; a source for other note systems (Readwise, a git notes repo, …)
 - [ ] Out-of-process plugins (webhook/MCP-based) for people who don't want third-party code in the hub process
 
-**Phase 4 — teams and distribution**
+**Phase 4 — teams and distribution** (built)
 
-- [ ] Users/teams/membership + admin/owner/member roles, `deployment_mode`
-      (`solo`/`team`/`multi_team`) and project `visibility`, UI for each
-- [ ] Claude Code plugin (`.claude-plugin/`) per [docs/DISTRIBUTION.md](DISTRIBUTION.md)
-      — blocked on confirming the current plugin skills-path convention first
-- [ ] `hub-sync` skill or process to push repo records to the hub and pull cross-project
-      context back into a session
-- [ ] On-request "compile" step to generate a specific tool's instruction file
-      (`.cursor/rules/`, `.windsurfrules`, etc.) from hub/repo memory
-- [ ] Adapter notes for at least one non-Claude assistant that supports MCP
-- [ ] k3s/k8s manifests (documented, genuinely optional)
+- [x] Users/teams/membership + admin/owner/member roles, `deployment_mode`
+      (`solo`/`team`/`multi_team`) and project `visibility`, UI and `acm user|team|project` CLI for each;
+      account deactivation; safe team/project deletion (see SECURITY.md § Roles)
+- [x] Claude Code plugin (`.claude-plugin/`): one repo is plugin and marketplace, `dream` skill stays a single
+      copy via `"skills": ["./.claude/skills/"]`; validated and installed with the real CLI (DISTRIBUTION.md)
+- [x] `hub-sync` skill to push repo records to the hub and pull cross-project context back
+- [x] On-request `acm compile` to generate CLAUDE.md / AGENTS.md / Copilot / Cursor / Windsurf instruction
+      files from hub or plain-file memory (core + rules, confirmed+, no user scope by default)
+- [x] Adapter notes for VS Code Copilot and Cursor (sourced from search results, not the vendors' docs — flagged)
+- [x] k3s/k8s manifests in `hub/deploy/k8s/` (structure-checked only; not applied to a cluster)
+- [ ] Live-session check of the plugin's skills after install, and building/running the container image
 
 **Later / optional**
 

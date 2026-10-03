@@ -1,0 +1,16 @@
+{
+  "name": "ai-core-memory",
+  "owner": {
+    "name": "Andy Prosser"
+  },
+  "plugins": [
+    {
+      "name": "ai-core-memory",
+      "source": ".",
+      "description": "Long-term memory for AI assistants: the dream skill, hub sync, and the memory hub's MCP tools."
+    }
+  ],
+  "metadata": {
+    "description": "Self-hosted long-term memory for AI assistants."
+  }
+}

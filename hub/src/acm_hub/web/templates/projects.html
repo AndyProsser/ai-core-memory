@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% from "_settings_nav.html" import settings_tabs with context %}
+{% block title %}Projects{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Settings</h1><p class="muted">{{ user.email }}</p></div></header>
+{{ settings_tabs('projects') }}
+<p class="muted">A project groups the memory for one codebase or area. Who can read it follows its visibility; who can change it follows ownership{% if deployment_mode != 'solo' %} and team membership{% endif %}.</p>
+
+{% if rows %}
+<table>
+  <thead><tr><th>Project</th><th>Visibility</th><th>Memory</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}{% set p = r.p %}
+  <tr>
+    <td><a href="/memory?project={{ p.slug }}"><strong>{{ p.slug }}</strong></a>
+      <div class="small muted">{% if r.team %}team {{ r.team.name }}{% elif r.mine %}yours{% else %}shared with you{% endif %}</div></td>
+    <td>
+      {% if r.manage %}
+      <form method="post" action="/settings/projects/{{ p.slug }}" class="actions flush">
+        {{ csrf() }}
+        <select name="visibility" aria-label="Visibility of {{ p.slug }}">
+          {% for v in visibilities %}<option value="{{ v }}" {% if v == p.visibility %}selected{% endif %}>{{ {'private': 'Private — just me', 'team': 'Team', 'public': 'Everyone on this hub (read-only)'}[v] }}</option>{% endfor %}
+          {% if p.visibility not in visibilities %}<option value="{{ p.visibility }}" selected>{{ p.visibility }} (not offered in this mode)</option>{% endif %}
+        </select>
+        {% if owned_teams %}<select name="team" aria-label="Team of {{ p.slug }}"><option value="">No team</option>
+          {% for t in owned_teams %}<option value="{{ t.slug }}" {% if r.team and r.team.id == t.id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
+          {% if r.team and r.team not in owned_teams %}<option value="{{ r.team.slug }}" selected>{{ r.team.name }}</option>{% endif %}</select>{% endif %}
+        <button type="submit">Save</button>
+      </form>
+      {% else %}<span class="badge">{{ p.visibility }}</span>{% endif %}
+    </td>
+    <td class="small">{{ r.records }} record{{ '' if r.records == 1 else 's' }}</td>
+    <td>
+      {% if r.manage %}
+      <details><summary class="small">Delete…</summary>
+        <form method="post" action="/settings/projects/{{ p.slug }}/delete" class="stack">
+          {{ csrf() }}
+          <p class="hint">Only possible once every record is archived. Export first (<code>acm export --project {{ p.slug }}</code>).</p>
+          <label class="inline"><input type="checkbox" name="purge" value="1"> Permanently delete its archived records and their history</label>
+          <input type="text" name="confirm" placeholder="Type “{{ p.slug }}” to confirm" autocomplete="off" aria-label="Type the project name to confirm">
+          <button class="danger" type="submit">Delete project</button>
+        </form></details>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<div class="empty"><p><strong>No projects yet.</strong></p><p>A project is created automatically the first time memory is written to it, or add one below.</p></div>{% endif %}
+
+<h2>New project</h2>
+<form method="post" action="/settings/projects" class="card">
+  {{ csrf() }}
+  <div class="row">
+    <div><label for="slug">Short name</label><input id="slug" type="text" name="slug" required pattern="[a-z0-9][a-z0-9\-]*" maxlength="64" placeholder="payments-service"><p class="hint">a–z, 0–9 and hyphens. This is what AI clients pass as <code>project</code>.</p></div>
+    <div><label for="vis">Visibility</label><select id="vis" name="visibility">
+      {% for v in visibilities %}<option value="{{ v }}">{{ {'private': 'Private — just me', 'team': 'Team', 'public': 'Everyone on this hub (read-only)'}[v] }}</option>{% endfor %}</select></div>
+    {% if owned_teams %}<div><label for="team">Team</label><select id="team" name="team"><option value="">—</option>{% for t in owned_teams %}<option value="{{ t.slug }}">{{ t.name }}</option>{% endfor %}</select>
+      <p class="hint">Needed for team visibility. You can attach a team you own.</p></div>{% endif %}
+  </div>
+  <div class="actions"><button class="primary" type="submit">Create project</button></div>
+</form>
+{% endblock %}

@@ -1,0 +1,55 @@
+# SQLite is single-writer local storage: exactly ONE replica, on a ReadWriteOnce volume. Do not scale this out
+# and do not point it at a shared network filesystem (see docs/DEPLOYMENT.md).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: memory-hub
+  labels: { app.kubernetes.io/name: memory-hub }
+spec:
+  serviceName: memory-hub
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: memory-hub }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: memory-hub }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: memory-hub
+          image: ai-core-memory/hub:latest # build and push to your own registry; pin a tag
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8000 }
+          envFrom:
+            - configMapRef: { name: memory-hub-config }
+            - secretRef: { name: memory-hub-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 2Gi } }

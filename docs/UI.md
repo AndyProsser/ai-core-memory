@@ -2,7 +2,7 @@
 
 The hub's human interface (see [ARCHITECTURE.md § Web UI](ARCHITECTURE.md#web-ui)).
 **Status:** Phase 1 is built (Memory, Record detail with history, Review's inbox and import
-conflicts, Focus preview, Data, Settings, first-run setup, light/dark theme). the proposal queue with side-by-side conflict and merge cards, supersede and "Still true" on the record page, and the lifecycle settings (Phase 2). the Plugins screen (Phase 3). The Teams & Users screen arrives with Phase 4. The code is in
+conflicts, Focus preview, Data, Settings, first-run setup, light/dark theme). the proposal queue with side-by-side conflict and merge cards, supersede and "Still true" on the record page, and the lifecycle settings (Phase 2). the Plugins screen (Phase 3). Projects, Teams and Users screens (Phase 4). The code is in
 [`hub/src/acm_hub/web/`](../hub/src/acm_hub/web/); the screenshots-in-both-themes check used
 during development is described under Testing below.
 
@@ -132,7 +132,18 @@ Offline-first and explicit:
   90 days), shown **once** in a copy box with a ready-to-paste `claude mcp add …` line
   and an `.mcp.json` snippet; list with prefix, scope, last used, expiry; **Revoke**
   (immediate). See [SECURITY.md](SECURITY.md#api-tokens-minimizing-the-blast-radius-of-a-leak).
-- **Teams & Users** _(team / multi_team; admin & owners)_ — members and roles, invites.
+- **Projects** — everyone: projects you can see, with visibility (`private`/`team`/`public`, limited to what
+  the deployment mode allows) and owning team. Controls appear only where you may use them (a project's owner,
+  or a team's owners). Deleting asks you to type the project's name and, if it holds archived records, tick a
+  separate "permanently delete them" box; live records block deletion.
+- **Teams** _(hidden in `solo`)_ — teams you belong to with roles; an owner adds members by email, changes
+  roles, removes people. An admin creates a team (naming its first owner) but sees only its name, and the page
+  says so. Last owner is protected.
+- **Users** _(admin)_ — create accounts (local password or SSO invite), deactivate/reactivate, grant or remove
+  admin, reset a local password (shown once). Deactivation signs the person out and revokes their tokens.
+
+Settings is a tab row — Account · Projects · Teams · Users · Plugins — showing only what your role and the
+deployment mode allow.
 - **Plugins** _(admin; built in Phase 3, reached from Settings)_ — a list of configured instances with
   on/off, last status and what each can see (nothing / which scopes / full text / personal memory are
   all flagged), then the available plugins to add. Each instance has a form generated from the plugin's

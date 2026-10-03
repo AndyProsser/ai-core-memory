@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% from "_settings_nav.html" import settings_tabs with context %}
+{% block title %}Teams{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Settings</h1><p class="muted">{{ user.email }}</p></div></header>
+{{ settings_tabs('teams') }}
+<p class="muted">Teams share project and team memory. Owners manage who's on a team; admins create teams and accounts but can't read a team's memory unless they're a member.</p>
+{% if teams %}
+<table>
+  <thead><tr><th>Team</th><th>Your role</th><th>People</th></tr></thead>
+  <tbody>{% for t in teams %}<tr>
+    <td><a href="/settings/teams/{{ t.slug }}"><strong>{{ t.name }}</strong></a><div class="small muted">{{ t.slug }}</div></td>
+    <td>{% if mine.get(t.id) %}<span class="badge {{ 'established' if mine[t.id] == 'owner' else '' }}">{{ mine[t.id] }}</span>{% else %}<span class="muted small">not a member</span>{% endif %}</td>
+    <td class="small">{{ sizes.get(t.id, 0) }}</td></tr>{% endfor %}</tbody>
+</table>
+{% else %}<div class="empty"><p><strong>You're not on a team yet.</strong></p><p>An admin creates teams; a team owner then adds you.</p></div>{% endif %}
+
+{% if user.is_admin %}
+<h2>New team</h2>
+<form method="post" action="/settings/teams" class="card">
+  {{ csrf() }}
+  <div class="row">
+    <div><label for="name">Name</label><input id="name" type="text" name="name" required maxlength="80" placeholder="Payments"></div>
+    <div><label for="slug">Short name</label><input id="slug" type="text" name="slug" required pattern="[a-z0-9][a-z0-9\-]*" maxlength="64" placeholder="payments"></div>
+    <div><label for="owner">First owner</label><select id="owner" name="owner" required><option value="">Choose…</option>{% for u in users %}<option value="{{ u.email }}">{{ u.email }}</option>{% endfor %}</select>
+      <p class="hint">Every team starts with an owner, who then runs its membership.</p></div>
+  </div>
+  <div class="actions"><button class="primary" type="submit">Create team</button></div>
+</form>
+{% endif %}
+{% endblock %}

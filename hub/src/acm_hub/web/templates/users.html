@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% from "_settings_nav.html" import settings_tabs with context %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Settings</h1><p class="muted">{{ user.email }} · admin</p></div></header>
+{{ settings_tabs('users') }}
+<p class="muted">Admins manage accounts. An admin has no special access to anyone's memory; that follows team membership like everyone else's.</p>
+{% if temp_password %}
+<div class="card" role="status"><strong>Temporary password for {{ temp_for }}</strong> — shown once. They're signed out everywhere.
+  <div class="tokenbox mono spaced" id="tp">{{ temp_password }}</div><button type="button" data-copy="tp">Copy</button></div>
+{% endif %}
+<table>
+  <thead><tr><th>Account</th><th>Sign-in</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for u in users %}<tr>
+    <td>{{ u.email }}{% if u.id == user.id %} <span class="muted small">(you)</span>{% endif %}{% if u.is_admin %} <span class="badge established">admin</span>{% endif %}</td>
+    <td class="small">{% if u.auth_provider == 'local' %}password{% else %}single sign-on{% if not u.external_id %} <span class="muted">(invited, hasn't signed in)</span>{% endif %}{% endif %}</td>
+    <td>{% if u.is_active %}<span class="badge confirmed">active</span>{% else %}<span class="badge stale">deactivated</span>{% endif %}</td>
+    <td><div class="actions flush">
+      {% if u.id != user.id %}
+        {% if u.is_active %}<form method="post" action="/settings/users/{{ u.id }}/active">{{ csrf() }}<input type="hidden" name="active" value="0"><button class="danger" type="submit">Deactivate</button></form>
+        {% else %}<form method="post" action="/settings/users/{{ u.id }}/active">{{ csrf() }}<input type="hidden" name="active" value="1"><button type="submit">Reactivate</button></form>{% endif %}
+      {% endif %}
+      <form method="post" action="/settings/users/{{ u.id }}/admin">{{ csrf() }}<input type="hidden" name="admin" value="{{ 0 if u.is_admin else 1 }}"><button type="submit">{{ 'Remove admin' if u.is_admin else 'Make admin' }}</button></form>
+      {% if u.auth_provider == 'local' %}<form method="post" action="/settings/users/{{ u.id }}/reset-password">{{ csrf() }}<button type="submit">Reset password</button></form>{% endif %}
+    </div></td>
+  </tr>{% endfor %}
+  </tbody>
+</table>
+
+<h2>Add an account</h2>
+<form method="post" action="/settings/users" class="card">
+  {{ csrf() }}
+  <div class="row">
+    <div><label for="email">Email</label><input id="email" type="email" name="email" required></div>
+    <div><label for="password">Initial password</label><input id="password" type="password" name="password" autocomplete="new-password" minlength="12"><p class="hint">At least 12 characters; leave empty for single sign-on.</p></div>
+  </div>
+  <label class="inline spaced"><input type="checkbox" name="sso"> Invite through single sign-on instead (they link their identity on first sign-in)</label><br>
+  <label class="inline spaced"><input type="checkbox" name="admin"> Make them an admin</label>
+  <div class="actions"><button class="primary" type="submit">Create account</button></div>
+</form>
+<p class="hint">Deactivating someone signs them out, revokes their API tokens and switches off any plugin acting for them. It never deletes their memory or its history.</p>
+{% endblock %}
