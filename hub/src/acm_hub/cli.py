@@ -16,6 +16,7 @@ from sqlmodel import Session, col, select
 
 from . import __version__, orgs
 from . import compile as compile_mod
+from . import oauth as oauth_mod
 from . import proposals as proposals_mod
 from .access import AccessError, NotFound, Principal, principal_for_user
 from .auth import has_admin, issue_setup_code, mint_token
@@ -206,8 +207,7 @@ def cmd_token_revoke(args: argparse.Namespace) -> int:
         tok = db.get(ApiToken, args.id)
         if not tok:
             raise CliError("No such token id (see `acm token list`).")
-        tok.revoked_at = tok.revoked_at or utcnow()
-        db.add(tok)
+        oauth_mod.revoke_api_token(db, tok)  # an OAuth app's token ends its whole grant
         db.commit()
         print("Revoked. It stops working immediately.")
     return 0
@@ -674,6 +674,48 @@ def cmd_compile(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_oauth(args: argparse.Namespace) -> int:
+    """Inspect and end OAuth grants straight from the database, with the hub down if need be. Like `acm plugins`,
+    it never loads protocol code: it is the offline off-switch for connected apps."""
+    from .models import OAuthClient, OAuthGrant
+
+    with _open() as db:
+        actor = _actor(db, args.user)
+        everyone = getattr(args, "all_users", False)
+        if everyone and not actor.is_admin:
+            raise AccessError("Only an admin can look at everyone's connected apps.")
+        mine = select(OAuthGrant).order_by(col(OAuthGrant.created_at))
+        if not everyone:
+            mine = mine.where(OAuthGrant.user_id == actor.user_id)
+        if args.ocmd in (None, "list"):
+            rows = db.exec(mine).all()
+            for g in rows:
+                c = db.get(OAuthClient, g.client_id)
+                u = db.get(User, g.user_id)
+                state = "revoked" if g.revoked_at else ("expired" if g.expires_at <= utcnow() else "active")
+                where = "all projects" if not g.project_ids else f"{len(g.project_ids)} project(s)"
+                print(
+                    f"{g.id}\t{u.email if u else '?'}\t{(c.client_name if c else None) or '(unnamed)'}\t"
+                    f"{g.access_level}\t{where}{' +personal' if g.include_user_scope else ''}\t{state}"
+                )
+            print(f"{len(rows)} grant(s)", file=sys.stderr)
+            return 0
+        # revoke: one grant, or every grant of this user (or of everyone, for an admin)
+        if not args.id and not args.all_grants:
+            raise CliError("Name a grant id, or pass --all to end every grant in scope.")
+        targets = [db.get(OAuthGrant, args.id)] if args.id else list(db.exec(mine).all())
+        n = 0
+        for g in targets:
+            if g is None or (not actor.is_admin and g.user_id != actor.user_id):
+                raise CliError("No such grant (see `acm oauth list`).")
+            if g.revoked_at is None:
+                oauth_mod.revoke_grant(db, g)
+                n += 1
+        db.commit()
+        print(f"Ended {n} grant(s). Their access and refresh tokens stop working immediately.")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -927,6 +969,18 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument(
         "--allow-in-repo", action="store_true", help="allow writing user-scope memory inside a git work tree"
     )
+
+    oa = sub.add_parser("oauth", help="list and end OAuth grants (apps you signed in, e.g. Claude.ai)")
+    oa.set_defaults(fn=cmd_oauth, ocmd=None, user=None, all_users=False)
+    osub = oa.add_subparsers(dest="ocmd")
+    ol = osub.add_parser("list", help="list grants (default)")
+    ol.add_argument("--all-users", action="store_true", help="every user's grants (admin)")
+    orv = osub.add_parser("revoke", help="end a grant (access and refresh tokens die at once)")
+    orv.add_argument("id", nargs="?", help="grant id from `acm oauth list`")
+    orv.add_argument("--all", dest="all_grants", action="store_true", help="end every grant in scope")
+    orv.add_argument("--all-users", action="store_true", help="with --all: everyone's grants (admin)")
+    for leaf in (ol, orv):
+        leaf.add_argument("--as", dest="user", metavar="EMAIL", help=f"act as this user ({EMAIL_HINT})")
 
     return ap
 

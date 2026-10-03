@@ -21,6 +21,7 @@ One Python process, one SQLite file. No external services.
 | Lifecycle: reinforcement, supersession + timeline, decay; proposal queue + Review screen; `acm consolidate` / `acm review`; scheduler | built (Phase 2) |
 | Plugins: event outbox + dispatcher, Apprise (Slack/Teams/ntfy/email) + signed webhook sinks, Obsidian + Memos sources, Plugins screen, `acm plugins` | built (Phase 3) |
 | Teams/users/projects roles + UI + CLI, Claude Code plugin, `hub-sync` skill, `acm compile`, k8s manifests | built (Phase 4) |
+| Image built and run, plugin live-tested, per-session core budget, session-only JSON API (`/api/v1`), optional MCP OAuth for Claude.ai connectors (`acm oauth`) | built (Phase 5) |
 
 ## Run it
 

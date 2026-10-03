@@ -1,4 +1,4 @@
-{% from "_macros.html" import csrf %}
+{% from "_macros.html" import csrf with context %}
 {% macro rec_block(label, r, text=None) %}
 <div class="side">
   <div class="side-label">{{ label }}</div>

@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import col, select
 
+from .. import oauth
 from ..access import AccessError, readable_project_ids
 from ..auth import mint_token, recently_authenticated
-from ..models import ApiToken, InstanceSettings, Project, WebSession, utcnow
+from ..models import ApiToken, InstanceSettings, OAuthClient, Project, WebSession, utcnow
 from ..records import ValidationFailed
 from ..security import check_password_policy, hash_password, verify_password
 from .deps import Ctx, notice_url, render, require_user, user_csrf
@@ -20,19 +21,33 @@ def _settings_page(
     request: Request, ctx: Ctx, *, new_token: str | None = None, error: str = "", status: int = 200
 ):  # noqa: ANN202
     tokens = ctx.db.exec(
-        select(ApiToken).where(ApiToken.user_id == ctx.user.id).order_by(col(ApiToken.created_at).desc())
+        select(ApiToken)
+        .where(
+            ApiToken.user_id == ctx.user.id, col(ApiToken.grant_id).is_(None)
+        )  # OAuth tokens are "connected apps"
+        .order_by(col(ApiToken.created_at).desc())
     ).all()
+    s = request.app.state.settings
+    apps = (
+        [
+            (g, (ctx.db.get(OAuthClient, g.client_id) or OAuthClient(id="", redirect_uris=[])).client_name)
+            for g in oauth.grants_for(ctx.db, ctx.user)
+        ]
+        if s.oauth_enabled
+        else []
+    )
     pids = readable_project_ids(ctx.db, ctx.principal)
     projects = ctx.db.exec(select(Project).where(Project.id.in_(pids))).all() if pids else []  # type: ignore[attr-defined]
     names = {p.id: p.slug for p in ctx.db.exec(select(Project)).all()}
     inst = ctx.db.get(InstanceSettings, 1) or InstanceSettings()
-    s = request.app.state.settings
     return render(
         request,
         "settings.html",
         ctx,
         status=status,
         tokens=tokens,
+        apps=apps,
+        oauth_enabled=s.oauth_enabled,
         projects=sorted(projects, key=lambda p: p.slug),
         project_names=names,
         new_token=new_token,
@@ -119,10 +134,8 @@ def revoke_token(token_id: str, ctx: Ctx = Depends(user_csrf)) -> RedirectRespon
     tok = ctx.db.get(ApiToken, token_id)
     if tok is None or tok.user_id != ctx.user.id:
         raise AccessError("No such token.")
-    if tok.revoked_at is None:
-        tok.revoked_at = utcnow()
-        ctx.db.add(tok)
-        ctx.db.commit()
+    oauth.revoke_api_token(ctx.db, tok)  # an app's token takes its refresh token with it
+    ctx.db.commit()
     return RedirectResponse(
         notice_url("/settings", "Token revoked. It stops working immediately."), status_code=303
     )

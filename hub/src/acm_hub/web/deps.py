@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup
@@ -149,7 +149,9 @@ def install_error_handlers(app: FastAPI) -> None:
             return r
         return RedirectResponse(exc.url, status_code=303)
 
-    def page(request: Request, status: int, title: str, message: str):  # noqa: ANN202
+    def page(request: Request, status: int, title: str, message: str, **extra):  # noqa: ANN003, ANN202
+        if request.url.path.startswith("/api/"):  # the JSON API answers in JSON, never an HTML error page
+            return JSONResponse({"error": message, **extra}, status_code=status)
         return render(request, "error.html", None, status=status, title=title, message=message)
 
     @app.exception_handler(AccessError)
@@ -166,11 +168,23 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Conflict)
     async def _conflict(request: Request, exc: Conflict):  # noqa: ANN202
-        return page(request, 409, "Conflict", str(exc))
+        return page(
+            request,
+            409,
+            "Conflict",
+            str(exc),
+            needs_confirmation=bool(getattr(exc, "needs_confirmation", False)),
+        )
 
     @app.exception_handler(404)
     async def _404(request: Request, exc):  # noqa: ANN001, ANN202
         return page(request, 404, "Not found", "There's nothing at this address.")
+
+    @app.exception_handler(HTTPException)
+    async def _http(request: Request, exc: HTTPException):  # noqa: ANN202
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+        return page(request, exc.status_code, "Error", str(exc.detail))
 
 
 def stash_put(request: Request, user_id: str, files: dict[str, bytes]) -> str:

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import csrf %}
+{% from "_macros.html" import csrf with context %}
 {% from "_settings_nav.html" import settings_tabs with context %}
 {% block title %}{{ team.name }}{% endblock %}
 {% block content %}

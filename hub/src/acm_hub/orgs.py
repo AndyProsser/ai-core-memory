@@ -142,6 +142,13 @@ def set_user_active(session: Session, actor, user: User, active: bool) -> None: 
         ).all():
             tok.revoked_at = utcnow()
             session.add(tok)
+        from .models import OAuthGrant
+        from .oauth import revoke_grant
+
+        for grant in session.exec(
+            select(OAuthGrant).where(OAuthGrant.user_id == user.id, col(OAuthGrant.revoked_at).is_(None))
+        ).all():
+            revoke_grant(session, grant)  # connected apps (e.g. Claude.ai) lose their refresh tokens too
         for inst in session.exec(select(PluginInstance).where(PluginInstance.owner_user_id == user.id)).all():
             inst.enabled = False
             session.add(inst)

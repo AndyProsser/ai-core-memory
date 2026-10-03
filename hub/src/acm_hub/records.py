@@ -43,7 +43,7 @@ SCOPES = ("project", "team", "user")
 CONFIDENCES = ("observed", "confirmed", "established")
 TIERS = ("core", "associated")
 STATUSES = ("active", "superseded", "stale", "archived")
-CHANGE_SOURCES = ("dream-cycle", "mcp-write", "import", "ui", "cli", "plugin", "mechanical")
+CHANGE_SOURCES = ("dream-cycle", "mcp-write", "import", "ui", "cli", "plugin", "mechanical", "api")
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 TOPIC_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -241,6 +241,47 @@ def _set_links(session: Session, p: Principal, rec: MemoryRecord, ids: list[str]
         session.add(MemoryLink(from_id=rec.id, to_id=target_id, kind="related"))
 
 
+@dataclass(frozen=True)
+class CoreLoad:
+    """What a session actually loads at start: user + team core, plus the core of the one project in play."""
+
+    base: int  # user- and team-scope core: in every session
+    per_project: dict[str, int]  # project id -> that project's core tokens
+
+    @property
+    def worst_project(self) -> str | None:
+        return max(self.per_project, key=lambda k: self.per_project[k]) if self.per_project else None
+
+    @property
+    def worst(self) -> int:
+        """The heaviest session this person can have: base + their biggest project."""
+        return self.base + max(self.per_project.values(), default=0)
+
+    def with_project(self, project_id: str | None) -> int:
+        return self.base + (self.per_project.get(project_id, 0) if project_id else 0)
+
+
+def core_load(
+    session: Session,
+    p: Principal,
+    *,
+    exclude_id: str | None = None,
+    exclude_ids: frozenset[str] = frozenset(),
+) -> CoreLoad:
+    q = select(MemoryRecord).where(
+        MemoryRecord.tier == "core", MemoryRecord.status == "active", visible_clause(session, p)
+    )
+    base, per_project = 0, {}
+    for r in session.exec(q).all():
+        if r.id == exclude_id or r.id in exclude_ids:
+            continue
+        if r.scope == "project" and r.project_id:
+            per_project[r.project_id] = per_project.get(r.project_id, 0) + record_tokens(r)
+        else:
+            base += record_tokens(r)
+    return CoreLoad(base, per_project)
+
+
 def core_usage(
     session: Session,
     p: Principal,
@@ -248,12 +289,8 @@ def core_usage(
     exclude_id: str | None = None,
     exclude_ids: frozenset[str] = frozenset(),
 ) -> int:
-    q = select(MemoryRecord).where(
-        MemoryRecord.tier == "core", MemoryRecord.status == "active", visible_clause(session, p)
-    )
-    return sum(
-        record_tokens(r) for r in session.exec(q).all() if r.id != exclude_id and r.id not in exclude_ids
-    )
+    """Core tokens in the heaviest session this person can have (not the sum over every project they can see)."""
+    return core_load(session, p, exclude_id=exclude_id, exclude_ids=exclude_ids).worst
 
 
 def _revision(
@@ -419,13 +456,26 @@ def _create(
 def _enforce_core_budget(
     session: Session, p: Principal, rec: MemoryRecord, replacing: frozenset[str] = frozenset()
 ) -> None:
+    """A session loads user + team core plus ONE project's core, so that is what the budget bounds.
+
+    A project-scope record is checked against its own project's session; a user- or team-scope record rides
+    along in every session, so it is checked against the heaviest one."""
     budget = _instance(session).core_token_budget
-    used = core_usage(session, p, exclude_id=rec.id, exclude_ids=replacing)
+    load = core_load(session, p, exclude_id=rec.id, exclude_ids=replacing)
     need = record_tokens(rec)
+    in_project = rec.scope == "project" and rec.project_id
+    used = load.with_project(rec.project_id) if in_project else load.worst
     if used + need > budget:
+        where = (
+            "this project's sessions"
+            if in_project
+            else "your heaviest project's sessions"
+            if load.per_project
+            else "every session"
+        )
         raise ValidationFailed(
-            f"Core is limited to ~{budget} tokens (currently ~{used}; this record needs ~{need}). "
-            "Demote or shorten another core record first."
+            f"Core is limited to ~{budget} tokens per session (~{used} already loaded in {where}; "
+            f"this record needs ~{need}). Demote or shorten another core record first."
         )
 
 

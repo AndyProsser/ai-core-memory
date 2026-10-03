@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import csrf, select %}
+{% from "_macros.html" import csrf, select with context %}
 {% block title %}{{ 'New record' if mode == 'new' else 'Edit ' ~ rec.name }}{% endblock %}
 {% block content %}
 <header class="page"><div><h1>{{ 'New record' if mode == 'new' else 'Edit record' }}</h1>

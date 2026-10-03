@@ -11,3 +11,6 @@ data:
   MEMORY_HUB_TRUST_PROXY: "true"
   MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS: "24"
   MEMORY_HUB_PLUGINS: "true"
+  # Let Claude.ai connectors sign in (MCP OAuth). Needs the https PUBLIC_URL above and an ingress that forwards
+  # /.well-known/*, /authorize, /token, /register, /revoke and /oauth/consent. See docs/SECURITY.md § MCP OAuth.
+  MEMORY_HUB_OAUTH_ENABLED: "false"

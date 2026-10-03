@@ -57,8 +57,10 @@ Notes from validation:
   expected: it is contributor guidance for this repo, not something the plugin ships. Ship context as skills.
 - A git-based install clones only tracked files, so users receive `hub/` and `docs/` along with the skills
   (about 2 MB). If that matters later, split the plugin into its own repo.
-- Not tested: a live model session actually invoking the skills after install (that needs an authenticated
-  Claude Code session). The skill path resolves and validates; treat first real use as the final check.
+- **Live-tested (Phase 5):** with the plugin installed in a scratch profile and the hub running from its
+  container image, a real Claude Code session called `memory_focus` through the plugin's MCP server and returned
+  a core rule (and its code word) from the hub, and listed `ai-core-memory:dream` and `ai-core-memory:hub-sync`.
+  The `hub_token` lands in Claude Code's secure credential store, not in `settings.json`.
 
 ### MCP: how the hub gets connected
 
@@ -164,8 +166,18 @@ A different mechanism entirely — there's no plugin system here today:
 - **Skills** — created or uploaded as a custom skill in-product (Pro/Max/Team/Enterprise
   plans), or pushed org-wide by a Team/Enterprise admin. No marketplace install path.
 - **MCP ("Connectors")** — add the hub as a **custom connector**: Customize → Connectors
-  → Add custom connector → the hub's HTTPS MCP URL, authenticating with either OAuth or
-  a fixed bearer-token header.
+  → Add custom connector → the hub's HTTPS MCP URL (`https://your-hub/mcp`). Two ways to authenticate:
+  - **OAuth (recommended where available)** — switch it on (`MEMORY_HUB_OAUTH_ENABLED=true`, with
+    `MEMORY_HUB_PUBLIC_URL` set to the exact https URL people use). Claude discovers the hub's metadata from the
+    `401` on `/mcp`, registers itself, and sends you to the hub's consent screen, where you choose projects and
+    read-only or read-write. Disconnect any time under Settings → Connected apps. Your reverse proxy must pass
+    `/.well-known/*`, `/authorize`, `/token`, `/register`, `/revoke` and `/oauth/consent` through to the hub, and
+    Claude's requests (from the range Anthropic publishes) must be able to reach all of them. Details and limits:
+    [SECURITY.md § MCP OAuth](SECURITY.md#mcp-oauth-optional).
+  - **A fixed bearer token in a request header** — mint a token in Settings → API tokens. (Claude documents
+    request-header credentials as a limited beta; check the Add custom connector dialog offers it.)
+  - **Claude Code** can use OAuth too: `claude mcp add --transport http memory-hub https://your-hub/mcp`, then
+    authenticate from `/mcp`. Its loopback callback is on the built-in allowlist.
 
 Because the hub is a plain HTTP MCP server (per ARCHITECTURE.md § Memory hub's API
 surface), the _same_ hub URL works for both Claude Code and Claude.ai — it's the

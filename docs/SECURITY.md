@@ -158,8 +158,9 @@ e.g. an admin with a local account, everyone else via OIDC):
 Both providers resolve to the same `users` row (`auth_provider` + `external_id` for
 OIDC-provisioned accounts), so everything downstream — teams, tokens, memory access —
 is identical regardless of how someone logged in. OIDC governs the human web-UI login
-only; AI/MCP clients still authenticate with API tokens (see above), since an
-interactive OAuth flow doesn't make sense for a long-running agent.
+only; AI/MCP clients authenticate with API tokens (see above), or — where an app can't take a pasted
+token, such as Claude.ai connectors — with [MCP OAuth](#mcp-oauth-optional), whose consent step reuses
+this same login.
 
 First-OIDC-login provisioning is an instance setting, not a fixed behavior: either
 auto-create a `member` account on first successful login, or require an admin to have
@@ -203,6 +204,77 @@ The web UI authenticates with a server-side session, not an API token:
 - Record bodies are untrusted markdown: rendered through a sanitizing renderer (no raw
   HTML, no script, links `rel="noopener noreferrer"`) so a malicious memory can't attack
   the person reviewing it.
+
+## MCP OAuth (optional)
+
+Claude.ai custom connectors (and Claude Code, if you prefer) can sign a person in instead of being handed a
+pasted token. This is **off by default** (`MEMORY_HUB_OAUTH_ENABLED=true` to switch on): a hub that doesn't need it
+exposes none of these endpoints and advertises nothing. It refuses to start with OAuth on unless
+`MEMORY_HUB_PUBLIC_URL` is `https://` (plain http is only tolerated for localhost or a private address) — codes
+and tokens travel through the browser.
+
+**The hub is its own authorization server** (the MCP spec requires the resource server's tokens to come from
+somewhere it trusts, and Claude uses the first `authorization_servers` entry it's given). "Backed by the hub's
+OIDC" means the person proves who they are with the hub's normal login — local password or your SSO — at the
+consent screen; OIDC itself is not re-implemented.
+
+**The one design rule: an OAuth access token is an ordinary hub API token.** It is an `ApiToken` row — project
+scope, read-only/read-write, user-scope opt-in, expiry, revocation, "dead the moment the person is deactivated" —
+so everything in [What AI clients cannot do](#what-ai-clients-cannot-do) applies unchanged and cannot drift.
+OAuth adds only who chooses the scope (the person, at consent), a short access-token lifetime (60 minutes) and
+rotating refresh tokens.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /.well-known/oauth-protected-resource[/mcp[/]]` | RFC 9728 metadata; names the hub as its own authorization server |
+| `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata; advertises only `S256` PKCE and public clients (`none`) |
+| `POST /register` | Dynamic Client Registration (RFC 7591), policed below |
+| `GET /authorize` → `/oauth/consent` | Authorization request, then the consent screen |
+| `POST /token` | Code exchange and refresh (form-encoded); refresh tokens rotate |
+| `POST /revoke` | RFC 7009; revoking either token ends the whole grant |
+
+An unauthenticated call to `/mcp` answers `401` with `WWW-Authenticate: Bearer resource_metadata="…"` so a
+client knows where to start.
+
+**What is enforced (each has a test that fails if it's removed — `hub/tests/test_oauth.py`):**
+
+- **Registration is open but confined.** Dynamic registration is unauthenticated by nature, so what a
+  registered client can *do* is what is limited. Redirect URIs must be exactly Claude's hosted callback
+  (`https://claude.ai/api/mcp/auth_callback`), an RFC 8252 loopback address (`http://localhost`, `127.0.0.1` or
+  `[::1]`, any port), or an exact URI the operator added in `MEMORY_HUB_OAUTH_EXTRA_REDIRECT_URIS`. Everything else
+  — look-alike hosts, wrong scheme, fragments, userinfo, custom schemes, other private addresses — is refused, so a
+  registered client can never receive an authorization code anywhere else. All clients are *public*: PKCE, no
+  secret stored or issued. Registration is rate-limited per IP, capped (500 clients), and registrations that never
+  led to a grant are swept after a day.
+- **PKCE (`S256`) is mandatory**; `plain` and a missing challenge are refused. Redirect URIs match the registered
+  value exactly, and an unregistered one gets an error page, never a redirect.
+- **Resource binding.** A `resource` parameter must name this hub's MCP endpoint (`invalid_target` otherwise).
+- **Codes** are 256-bit, single-use (claimed atomically), live 60 seconds, and are bound to the client and the
+  redirect. Presenting a used code again revokes whatever its first exchange produced (RFC 6749 §4.1.2).
+  Only hashes of codes, access tokens and refresh tokens are stored.
+- **Consent is a human act.** It needs a signed-in session (a deactivated person can't), a CSRF token, and an
+  explicit choice: which projects (none ticked is refused, never silently "everything"), whether personal memory
+  is included (off by default), and read-only (default) or read-write — write is offered only if the app asked
+  for it. The redirect target comes from the stored, already-validated request, never from the form. The page
+  shows where the browser is about to go, warns that a loopback target means a program on this computer, renders
+  the app's self-chosen name inert, and relaxes `form-action` only to that one origin.
+- **Refresh tokens rotate on every use.** Replaying an already-rotated refresh token is treated as theft and ends
+  the grant (the legitimate chain dies too; the person reconnects). A refresh can narrow scope, never widen it;
+  the chain has an absolute lifetime (60 days).
+- **The person stays in control.** Connected apps are listed in Settings with a Disconnect button that ends
+  access immediately; they are deliberately *not* mixed into the hand-made token list, and revoking an app's token
+  by any route ends its grant. Deactivating an account stops its tokens and refreshes at once.
+- **No new door.** `/api/v1` still refuses every `Authorization` header, OAuth tokens included.
+
+**Not supported, on purpose:** Client ID Metadata Documents (Claude falls back to DCR), confidential clients,
+the `client_credentials` grant, and enterprise identity-assertion grants. Each would widen what an
+unauthenticated caller can influence.
+
+**Honest limits.** A self-registered client's name is its own claim; the consent screen says the hub can't verify
+it, and the redirect allowlist — not the name — is what keeps a rogue client from collecting codes. Loopback
+redirects can be claimed by any local process (the spec's known risk), hence the extra warning. This has been
+exercised end to end against a client written from the spec and Claude's published requirements; a real
+claude.ai connection needs a public HTTPS URL and has not been made.
 
 ## What AI clients cannot do
 

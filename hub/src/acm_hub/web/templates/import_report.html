@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import csrf %}
+{% from "_macros.html" import csrf with context %}
 {% block title %}Import preview{% endblock %}
 {% block content %}
 <header class="page"><div><h1>Import preview</h1><p class="muted">Dry run — nothing has been changed yet.</p></div></header>

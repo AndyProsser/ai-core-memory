@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import csrf %}
+{% from "_macros.html" import csrf with context %}
 {% from "_settings_nav.html" import settings_tabs with context %}
 {% block title %}Settings{% endblock %}
 {% block content %}
@@ -24,6 +24,20 @@
   <div><label for="cf">Confirm</label><input id="cf" type="password" name="confirm" autocomplete="new-password" required></div></div>
   <div class="actions"><button type="submit">Change password</button></div></form></div>
 {% else %}<p class="muted">You sign in with single sign-on, so there's no local password.</p>{% endif %}
+
+{% if oauth_enabled %}
+<h2>Connected apps</h2>
+<p class="muted">Apps you signed in to this hub (for example Claude.ai). Each one has only the access you approved; disconnecting ends it immediately.</p>
+{% if apps %}
+<table><thead><tr><th>App</th><th>Access</th><th>Connected</th><th>Last renewed</th><th></th></tr></thead><tbody>
+{% for g, name in apps %}<tr>
+  <td>{{ name or 'Unnamed app' }}</td>
+  <td class="small">{{ g.access_level|replace('_',' ') }}<br>{% if g.project_ids %}{% for pid in g.project_ids %}{{ project_names.get(pid, '?') }}{{ ', ' if not loop.last }}{% endfor %}{% else %}all my projects{% endif %}{% if g.include_user_scope %}<br>+ personal memory{% endif %}</td>
+  <td class="small">{{ g.created_at|date }}</td><td class="small">{{ g.last_refreshed_at|datetime if g.last_refreshed_at else '—' }}</td>
+  <td><form method="post" action="/settings/apps/{{ g.id }}/disconnect">{{ csrf() }}<button class="danger" type="submit">Disconnect</button></form></td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p class="hint">Nothing connected.</p>{% endif %}
+{% endif %}
 
 <h2>API tokens</h2>
 <p class="muted">Tokens let AI clients and scripts talk to this hub over MCP. A token acts as you, limited to what you choose here. It's shown once.</p>

@@ -92,6 +92,9 @@ class ApiToken(SQLModel, table=True):
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     last_used_at: NaiveDatetime | None = None
     revoked_at: NaiveDatetime | None = None
+    # Set when this token was issued through OAuth (docs/SECURITY.md § MCP OAuth). Such tokens are managed as a
+    # connected app, not as hand-made tokens, and revoking one ends the whole grant.
+    grant_id: str | None = Field(default=None, index=True)
 
 
 class WebSession(SQLModel, table=True):
@@ -171,7 +174,9 @@ class MemoryRevision(SQLModel, table=True):
     changed_by_label: str | None = None  # e.g. OS username for CLI changes
     changed_at: NaiveDatetime = Field(default_factory=utcnow)
     change_note: str | None = None
-    change_source: str = "mcp-write"  # dream-cycle | mcp-write | import | ui | cli | plugin | mechanical
+    change_source: str = (
+        "mcp-write"  # dream-cycle | mcp-write | import | ui | cli | plugin | mechanical | api
+    )
     flagged: bool = False  # called out for human attention (confirmed-record change, import conflict, ...)
     applied: bool = True  # False = a pending conflict awaiting a human decision
 
@@ -291,3 +296,74 @@ class InboxItem(SQLModel, table=True):
 
 # Re-exported for type checkers that dislike the Any in Column(JSON).
 JSONValue = Any
+
+
+# --- MCP OAuth (docs/SECURITY.md § MCP OAuth) --------------------------------------------------------------
+
+
+class OAuthClient(SQLModel, table=True):
+    """A client that registered itself (RFC 7591). Always a public client: PKCE, no stored secret."""
+
+    __tablename__ = "oauth_clients"
+    id: str = Field(primary_key=True)  # the client_id
+    client_name: str | None = None  # self-asserted: shown on the consent screen as untrusted text
+    redirect_uris: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    last_used_at: NaiveDatetime | None = None
+
+
+class OAuthRequest(SQLModel, table=True):
+    """An /authorize request parked while the signed-in person decides on the consent screen."""
+
+    __tablename__ = "oauth_requests"
+    id: str = Field(primary_key=True)
+    client_id: str = Field(index=True)
+    redirect_uri: str
+    redirect_uri_provided_explicitly: bool = True
+    state: str | None = None
+    scopes: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    code_challenge: str
+    resource: str | None = None
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    expires_at: NaiveDatetime
+
+
+class OAuthCode(SQLModel, table=True):
+    """A single-use, short-lived authorization code. Only its hash is stored."""
+
+    __tablename__ = "oauth_codes"
+    code_hash: str = Field(primary_key=True)
+    client_id: str = Field(index=True)
+    user_id: str = Field(foreign_key="users.id")
+    redirect_uri: str
+    redirect_uri_provided_explicitly: bool = True
+    code_challenge: str
+    resource: str | None = None
+    scopes: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    project_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    include_user_scope: bool = False
+    access_level: str = "read_only"
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    expires_at: NaiveDatetime
+    used_at: NaiveDatetime | None = None
+    grant_id: str | None = None  # set once exchanged, so a replayed code can revoke what it produced
+
+
+class OAuthGrant(SQLModel, table=True):
+    """What a person allowed one client to do. The access tokens it mints are ordinary ApiToken rows."""
+
+    __tablename__ = "oauth_grants"
+    id: str = Field(default_factory=new_id, primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
+    client_id: str = Field(index=True)
+    project_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    include_user_scope: bool = False
+    access_level: str = "read_only"
+    scopes: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    resource: str | None = None
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    last_refreshed_at: NaiveDatetime | None = None
+    expires_at: NaiveDatetime  # absolute lifetime of the refresh chain
+    revoked_at: NaiveDatetime | None = None
+    refresh_hash: str = Field(index=True, unique=True)  # current refresh token (hash)
+    prev_refresh_hash: str | None = Field(default=None, index=True)  # the one just replaced: reuse => theft

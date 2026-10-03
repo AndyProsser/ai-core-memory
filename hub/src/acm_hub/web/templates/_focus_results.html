@@ -1,4 +1,4 @@
-{% from "_macros.html" import badges %}
+{% from "_macros.html" import badges with context %}
 {% if pack %}
   {% for n in pack.notes %}<div class="warning small">{{ n }}</div>{% endfor %}
   <div class="group-title"><span>Core · always included</span><span>{{ pack.core_tokens }} / {{ pack.core_budget }} tokens</span></div>

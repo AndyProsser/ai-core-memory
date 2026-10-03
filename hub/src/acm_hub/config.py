@@ -65,6 +65,19 @@ class Settings:
         default_factory=lambda: os.environ.get("MEMORY_HUB_OIDC_SCOPES", "openid email profile")
     )
 
+    # MCP OAuth (docs/SECURITY.md § MCP OAuth): lets connectors such as Claude.ai sign in instead of pasting a token.
+    # Off by default; a hub that never needs it exposes none of its endpoints.
+    oauth_enabled: bool = field(default_factory=lambda: _bool("MEMORY_HUB_OAUTH_ENABLED", False))
+    # Extra redirect URIs (exact match, comma separated) a registering client may use, on top of the built-in
+    # allowlist (Claude's hosted callback and loopback for local tools). Deny by default.
+    oauth_extra_redirect_uris: str = field(
+        default_factory=lambda: os.environ.get("MEMORY_HUB_OAUTH_EXTRA_REDIRECT_URIS", "")
+    )
+    oauth_access_token_minutes: int = field(
+        default_factory=lambda: _int("MEMORY_HUB_OAUTH_ACCESS_TOKEN_MINUTES", 60)
+    )
+    oauth_refresh_days: int = field(default_factory=lambda: _int("MEMORY_HUB_OAUTH_REFRESH_DAYS", 60))
+
     @property
     def oidc_enabled(self) -> bool:
         return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)

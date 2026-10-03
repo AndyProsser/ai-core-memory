@@ -136,6 +136,11 @@ Offline-first and explicit:
   the deployment mode allows) and owning team. Controls appear only where you may use them (a project's owner,
   or a team's owners). Deleting asks you to type the project's name and, if it holds archived records, tick a
   separate "permanently delete them" box; live records block deletion.
+- **Connected apps** _(only when MCP OAuth is on)_ — apps you signed in to the hub (e.g. Claude.ai), each with
+  the projects and access level you approved and a **Disconnect** button that ends it immediately. A separate
+  **consent screen** (`/oauth/consent`) appears when an app asks to connect: it names the app (as inert text),
+  shows where your browser will go, warns for loopback targets, and makes you choose projects (none ticked is
+  refused), personal memory (off by default) and read-only/read-write before anything is shared.
 - **Teams** _(hidden in `solo`)_ — teams you belong to with roles; an owner adds members by email, changes
   roles, removes people. An admin creates a team (naming its first owner) but sees only its name, and the page
   says so. Last owner is protected.
@@ -229,6 +234,15 @@ form, the sanitized-markdown rendering, theme persistence), and a test that fail
 template contains an inline style, script, or event handler (the CSP would silently drop
 them — that is how a real bug, a core-budget meter that rendered full-width, was caught).
 UI changes are also reviewed by screenshotting each screen in light, dark, and phone width.
+
+**Real-browser checks.** In-process tests can't see what a browser does, and that mattered: until Phase 5 every plain
+form returned 403 in a real browser — the `csrf()` template macro was imported without template context, so each
+form's hidden token was empty — while every test passed, because the tests posted the token read from the page's meta
+tag. It was found by driving the OAuth consent screen in Chromium. Now a regression test
+(`tests/test_csrf_forms.py`) submits forms using only their own hidden field and fails if any is empty (it reproduces
+the original failure when the fix is reverted), and two opt-in scripts under
+[`hub/tests/e2e/`](../hub/tests/e2e/README.md) drive a running hub in a real browser: the main forms, and the
+whole OAuth flow including the approval redirect through the consent page's CSP.
 
 Still to add: an automated contrast check over the token table, keyboard-navigation tests
 (Playwright), and a "works with the network off" test that loads every screen with all

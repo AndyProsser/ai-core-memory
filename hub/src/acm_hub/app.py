@@ -66,7 +66,12 @@ class McpAuthMiddleware:
             body = json.dumps({"error": e.message}).encode()
             hdrs = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
             if e.status == 401:
-                hdrs.append((b"www-authenticate", b'Bearer realm="memory-hub"'))
+                challenge = 'Bearer realm="memory-hub"'
+                if st.settings.oauth_enabled:  # tell OAuth clients where to start (RFC 9728 §5.1)
+                    from .oauth import metadata_url
+
+                    challenge += f', resource_metadata="{metadata_url(st.settings, scope["path"])}"'
+                hdrs.append((b"www-authenticate", challenge.encode()))
             await send({"type": "http.response.start", "status": e.status, "headers": hdrs})
             await send({"type": "http.response.body", "body": body})
             return
@@ -222,6 +227,10 @@ def create_app(settings: Settings | None = None, *, http_client_factory=None) ->
     from .web import install  # imported late: web depends on the app state above
 
     install(app)
+    if settings.oauth_enabled:
+        from . import oauth
+
+        oauth.install(app, engine, settings)
     root = Root(app, mcp_asgi)
     root.fastapi = app  # type: ignore[attr-defined]
     return root

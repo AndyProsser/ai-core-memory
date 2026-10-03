@@ -20,7 +20,7 @@ from .models import InboxItem, InstanceSettings, MemoryLink, MemoryRecord, Proje
 from .records import (
     _STOP,
     RecordIn,
-    core_usage,
+    core_load,
     project_slug,
     record_tokens,
     write_record,
@@ -204,10 +204,10 @@ def run_consolidation(
         for up in users:
             if up is None or not up.user_id:
                 continue
-            used_tokens = core_usage(session, up)
-            if used_tokens <= inst.core_token_budget:
+            load = core_load(session, up)
+            if load.worst <= inst.core_token_budget:
                 continue
-            core = [
+            all_core = [
                 r
                 for r in session.exec(
                     select(MemoryRecord).where(
@@ -218,19 +218,35 @@ def run_consolidation(
                 ).all()
                 if can_write(session, up, r)
             ]
-            core.sort(
-                key=lambda r: (CONF_RANK[r.confidence], r.reinforcement_count, last_activity(r))
-            )  # least supported first
-            over_by, demotions = used_tokens - inst.core_token_budget, report.proposed.get("demote_core", 0)
-            for r in core:
+            demotions = report.proposed.get("demote_core", 0)
+            over_by = load.worst - inst.core_token_budget
+            proposed_ids: set[str] = set()  # a base-core demotion relieves every session, so count it once
+            # Every project's session is its own budget: relieve each overloaded one, heaviest first.
+            for project_id in sorted(load.per_project, key=lambda k: -load.per_project[k]) or [None]:
+                load = core_load(session, up, exclude_ids=frozenset(proposed_ids))
+                used_tokens = load.with_project(project_id)
                 if used_tokens <= inst.core_token_budget:
-                    break
-                propose(
-                    "demote_core",
-                    {"record": r.id},
-                    f"Core is ~{used_tokens} tokens, over its ~{inst.core_token_budget} budget. This is the least-reinforced core record (~{record_tokens(r)} tokens).",
-                )
-                used_tokens -= record_tokens(r)
+                    continue
+                candidates = [
+                    r
+                    for r in all_core
+                    if r.id not in proposed_ids
+                    and (r.scope != "project" or (project_id is not None and r.project_id == project_id))
+                ]
+                candidates.sort(
+                    key=lambda r: (CONF_RANK[r.confidence], r.reinforcement_count, last_activity(r))
+                )  # least supported first
+                for r in candidates:
+                    if used_tokens <= inst.core_token_budget:
+                        break
+                    propose(
+                        "demote_core",
+                        {"record": r.id},
+                        f"A session in this project loads ~{used_tokens} core tokens, over the ~{inst.core_token_budget} budget. "
+                        f"This is the least-reinforced core record in it (~{record_tokens(r)} tokens).",
+                    )
+                    proposed_ids.add(r.id)
+                    used_tokens -= record_tokens(r)
             if (raised := report.proposed.get("demote_core", 0) - demotions) > 0:
                 events.emit(  # one heads-up per run, only when there's something new to decide
                     session,

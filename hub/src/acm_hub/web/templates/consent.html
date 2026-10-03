@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf with context %}
+{% block title %}Connect an app{% endblock %}
+{% block content %}
+<h1>Connect an app to your memory</h1>
+<p class="muted">Signed in as {{ user.email }}. Nothing is shared until you approve.</p>
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+<div class="card">
+  <p><strong>{{ client_name }}</strong> wants to read{% if wants_write %} and write{% endif %} your memory in this hub.</p>
+  <p>After you decide, your browser goes to <strong class="mono">{{ redirect_host }}</strong>.</p>
+  <p class="hint">This app registered itself; the hub can't verify who it is. Only continue if you just started this connection yourself.
+  {% if loopback %}It will hand the result to a program running on <em>this computer</em> — any local program could be claiming to be it.{% endif %}</p>
+</div>
+<form method="post" action="/oauth/consent" class="stack">
+  {{ csrf() }}
+  <input type="hidden" name="request" value="{{ req.id }}">
+  <fieldset class="card"><legend>Which memory can it reach?</legend>
+    <label><input type="radio" name="scope_mode" value="some" checked> Only what I tick below</label>
+    {% for p in projects %}<label class="indent"><input type="checkbox" name="projects" value="{{ p.id }}"> {{ p.slug }}</label>{% else %}<p class="hint indent">You have no projects yet.</p>{% endfor %}
+    <label><input type="radio" name="scope_mode" value="all"> All my projects, including ones I create later</label>
+    <label><input type="checkbox" name="user_scope" value="1"> My personal memory too <span class="hint">(things only about me — leave off unless you need it)</span></label>
+  </fieldset>
+  <fieldset class="card"><legend>What may it do?</legend>
+    <label><input type="radio" name="access" value="read_only" checked> Read only</label>
+    {% if wants_write %}<label><input type="radio" name="access" value="read_write"> Read and write <span class="hint">(it can add and update records; it can never mark something <em>established</em> or change what's core)</span></label>{% endif %}
+  </fieldset>
+  <p class="hint">You can disconnect it any time in Settings. Its access lasts about an hour at a time and is renewed only while you stay connected.</p>
+  <div class="actions">
+    <button class="primary" type="submit" name="decision" value="approve">Approve</button>
+    <button type="submit" name="decision" value="deny">Deny</button>
+  </div>
+</form>
+{% endblock %}

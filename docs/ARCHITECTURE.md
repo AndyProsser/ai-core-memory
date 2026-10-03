@@ -172,9 +172,14 @@ what's relevant) — the hub just does it faster and with ranking.
    so focus is explainable and debuggable — the web UI's "Focus preview" runs this exact
    function so a person can see what an AI would be handed for a given task.
 
-The core budget is enforced when a record is promoted, against the core records visible to
-the person doing the promoting — exact per-session accounting across user, team, and project
-core is still open (see the roadmap); the `promote_core` proposal does make room exactly. Focus reports (rather than hides) an
+The core budget bounds what **one session** loads — user and team core plus the core of the single project in
+play — not the sum over every project a person can see (other projects' core is never loaded alongside). A
+project-scope record is checked against its own project's session; a user- or team-scope record rides along in
+every session, so it is checked against the heaviest one. The consolidation pass uses the same model: it proposes
+demotions per overloaded session, and one demotion of shared (user/team) core relieves every session at once.
+A session with no project in play loads every visible project's core, as before; the budget is enforced for
+project-bearing sessions, which is how assistants are expected to call `memory_focus`. The `promote_core`
+proposal makes room exactly. Focus reports (rather than hides) an
 over-budget core set. Two deliberate limits. **No embeddings in the core path** — consistent with the
 non-goals above; FTS5 + topics + links is enough for thousands of curated records, and a
 vector index can arrive later as a [plugin](PLUGINS.md), not a dependency. And
@@ -473,11 +478,15 @@ Three audiences, three ways in, one process, one set of access-control rules:
   memory works here with **no AI in the loop**: browsing and editing records with their
   revision history, the proposal review queue, inbox quick-capture, focus preview,
   token minting/revocation, teams and users, plugin configuration, import/export. The UI
-  is specified in [docs/UI.md](UI.md). **Status:** in Phase 1 the web UI _is_ the human
-  interface (server-rendered routes under `/memory`, `/review`, `/focus`, `/data`,
-  `/settings`); a separate JSON REST API for people (`/api/memories`, `/api/tokens`, …) is
-  not built yet — scripts and backups use the `acm` CLI, and AI clients use MCP. When it
-  is added it will accept session auth only, never API tokens (see
+  is specified in [docs/UI.md](UI.md). **Status:** the server-rendered UI (routes under `/memory`,
+  `/review`, `/focus`, `/data`, `/settings`) is the main human interface, and a small JSON API for people
+  lives at `/api/v1` — `GET /me` (also hands out the session's CSRF token), `GET/POST /records`,
+  `GET/PATCH /records/{id|name}`, `GET /records/{id}/history`, `GET /focus`, `GET /projects`, `GET /teams`.
+  It accepts a **signed-in session only**: any `Authorization` header — API token or OAuth token — is refused
+  with a clear `401`, writes need the `X-CSRF-Token` header (and a matching `Origin` if sent), errors are JSON,
+  and every call goes through the same access rules, confidence gating and revisions as the UI (revisions are
+  attributed to source `api`). It deliberately stops at records, focus and listings; proposals, import/export,
+  tokens, teams and plugins stay in the UI and `acm` (see
   [docs/SECURITY.md § What AI clients cannot do](SECURITY.md#what-ai-clients-cannot-do)).
 - **MCP surface (bearer API-token auth, `POST /mcp`)** — for AI clients, and the path meant for
   routine AI-driven writes: `memory.focus` (task-focused context pack — see
@@ -657,9 +666,8 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
 - [x] `acm` CLI: bootstrap, export, `import` (dry run by default), list/show/edit — works offline
 - [x] Web UI: Memory, Record detail + history, Review (inbox + import conflicts), Focus
       preview, Data (import/export), Settings (tokens, theme, instance); light/dark theme
-- [x] Container image + docker-compose per [docs/DEPLOYMENT.md](DEPLOYMENT.md) (image
-      definition written; not built in the authoring environment — see DEPLOYMENT.md)
-- [ ] Session-authenticated JSON REST API for people (the UI and CLI cover every operation today)
+- [x] Container image + docker-compose per [docs/DEPLOYMENT.md](DEPLOYMENT.md) (built and run in Phase 5)
+- [x] Session-authenticated JSON API for people at `/api/v1` (Phase 5)
 - [x] Team/membership screens (Phase 4)
 
 **Phase 2 — memory that learns** (built)
@@ -672,8 +680,7 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
 - [x] Core budget enforcement at promotion, `promote_core` / `demote_core` proposals
 - [x] Promotion workflow with an explicit human approval step (the proposal queue _is_ it),
       including `promote_scope`
-- [ ] Per-session core accounting across user + team + project core (the budget is checked
-      against the core visible to whoever is promoting, which is exact for `solo`)
+- [x] Per-session core accounting across user + team + project core (Phase 5)
 - [ ] LLM-assisted classification _inside_ the hub (`generated_by: llm-worker` is reserved; today
       judgement comes from an AI client pulling the work package)
 
@@ -698,12 +705,25 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
       files from hub or plain-file memory (core + rules, confirmed+, no user scope by default)
 - [x] Adapter notes for VS Code Copilot and Cursor (sourced from search results, not the vendors' docs — flagged)
 - [x] k3s/k8s manifests in `hub/deploy/k8s/` (structure-checked only; not applied to a cluster)
-- [ ] Live-session check of the plugin's skills after install, and building/running the container image
+- [x] Live-session check of the plugin's skills after install, and building/running the container image (Phase 5)
+
+**Phase 5 — hardening and MCP OAuth** (built)
+
+- [x] The container image was built and run (non-root, healthy, `0600` database files); the plugin was installed
+      with the real CLI and driven by a live Claude Code session that pulled a record from the running
+      container; the k8s manifests pass strict schema validation on 1.28/1.31/1.34; the backup CronJob's script
+      ran inside the image
+- [x] Per-session core accounting; `/api/v1` session-only JSON API
+- [x] MCP OAuth with the hub as authorization server, DCR confined to known-safe redirects, mandatory PKCE,
+      consent screen, rotating refresh tokens with reuse detection, connected-apps management, `acm oauth`
+      (see [docs/SECURITY.md § MCP OAuth](SECURITY.md#mcp-oauth-optional))
+- [x] Found and fixed, by driving the consent screen in a real browser: every plain form had been posting an empty
+      CSRF token (a template-import bug the in-process tests couldn't see). Regression test plus opt-in browser
+      scripts in `hub/tests/e2e/` (see [docs/UI.md § Testing](UI.md#testing))
+- [ ] A real claude.ai connector sign-in (needs a public HTTPS URL), and applying the manifests to a cluster
 
 **Later / optional**
 
-- [ ] MCP OAuth backed by the hub's OIDC, for Claude.ai connectors that prefer it to
-      bearer tokens
 - [ ] Optional embedding index as a plugin (never a core dependency)
 - [ ] Client-side encryption of `private`-scope bodies at rest (see SECURITY.md)
 - [ ] Reference implementation of the dream pipeline outside a single chat session

@@ -24,11 +24,12 @@ The real definition is [`hub/Dockerfile`](../hub/Dockerfile) (build context: `hu
   wheel, so the container needs no network access at runtime other than what you configure
   (OIDC discovery, plugins).
 
-> **Verification status:** the compose file is validated with `docker compose config`, and the
-> image's build-and-install steps were reproduced outside Docker (build the wheel, install it
-> into a clean environment from that wheel only, run `acm migrate` and `acm serve`, hit
-> `/healthz`). The image itself has **not** been built in the authoring environment, which had
-> no Docker daemon — run `docker compose up --build` once and report anything that differs.
+> **Verification status:** the image has been **built and run** (Docker 29, vfs storage): it runs as uid 1000,
+> its `HEALTHCHECK` reports healthy, the database files are created `0600`, `acm setup-code` works inside it,
+> and `/mcp` rejects unauthenticated calls. Its pip steps needed this sandbox's TLS-intercepting proxy CA to be
+> injected — the only difference from the shipped Dockerfile, and irrelevant on a normal network. The compose
+> file is validated with `docker compose config` but was not brought up (the sandbox daemon had no bridge
+> networking), so run `docker compose up --build` once on your own host.
 
 ## docker-compose — the primary supported path
 
@@ -129,10 +130,21 @@ compose file. The nightly `CronJob` takes a consistent online copy of the whole 
 onto its own volume and keeps 14; it is scheduled next to the hub pod because the hub's volume is
 ReadWriteOnce. Copy backups off the cluster as well.
 
-**Verification status, honestly:** the YAML parses and the selectors, names and PVC references were checked by
-script, and the backup script was run against a live WAL database. The manifests were **not** applied to a
-cluster or schema-validated (`kubectl`/`kubeconform` weren't available), and the image they reference has not
-been built here. Treat them as a reviewed starting point.
+**Verification status, honestly:** every manifest passes `kubernetes-validate --strict` against Kubernetes
+1.28, 1.31 and 1.34 (`kustomization.yaml` has no schema in that tool), selectors/names/PVC references were
+checked by script, and the backup CronJob's exact script was run inside the built image against a live hub
+volume (as uid 1000, with the backup volume owned by the pod's `fsGroup` — a bare Docker volume is root-owned and
+fails, which is what `fsGroup: 1000` is for), producing a `0600` copy that passes `PRAGMA integrity_check`. The
+manifests were **not** applied to a real cluster. Treat them as a validated starting point.
+
+### MCP OAuth (optional)
+
+To let Claude.ai connectors sign in rather than paste a token, set `MEMORY_HUB_OAUTH_ENABLED=true` and make
+`MEMORY_HUB_PUBLIC_URL` the exact `https://` address people use (the hub refuses to start otherwise). The ingress
+or reverse proxy must forward `/.well-known/*`, `/authorize`, `/token`, `/register`, `/revoke` and `/oauth/consent`
+to the hub unchanged. Optional: `MEMORY_HUB_OAUTH_EXTRA_REDIRECT_URIS` (exact URIs, comma-separated, on top of
+Claude's callback and loopback), `MEMORY_HUB_OAUTH_ACCESS_TOKEN_MINUTES` (60) and `MEMORY_HUB_OAUTH_REFRESH_DAYS`
+(60). Inspect and cut access offline with `acm oauth`. See [SECURITY.md § MCP OAuth](SECURITY.md#mcp-oauth-optional).
 
 ## Backups
 

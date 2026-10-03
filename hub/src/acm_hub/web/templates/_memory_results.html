@@ -1,4 +1,4 @@
-{% from "_macros.html" import record_row %}
+{% from "_macros.html" import record_row with context %}
 {% if total == 0 %}
   <div class="empty"><p><strong>No records match.</strong></p>
     <p>Records appear here when you add one, import an export, or an AI client writes one through the hub.</p>
@@ -6,7 +6,7 @@
 {% else %}
   {% if core %}
   <div class="group-title"><span>Core · loaded in every session</span>
-    <span>{{ core_used }} / {{ core_budget }} tokens <progress class="meter {% if core_used > core_budget %}over{% endif %}" value="{{ [core_used, core_budget]|min }}" max="{{ core_budget }}" aria-label="Core budget used">{{ core_pct }}%</progress></span></div>
+    <span title="The most core any one session loads: your user and team core plus your biggest project's. Other projects are never loaded together.">heaviest session {{ core_used }} / {{ core_budget }} tokens <progress class="meter {% if core_used > core_budget %}over{% endif %}" value="{{ [core_used, core_budget]|min }}" max="{{ core_budget }}" aria-label="Core budget used">{{ core_pct }}%</progress></span></div>
   <ul class="records">{% for v in core %}{{ record_row(v) }}{% endfor %}</ul>
   {% endif %}
   {% if associated %}
