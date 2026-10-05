@@ -44,7 +44,7 @@ spec:
                     matchLabels: { app.kubernetes.io/name: memory-hub, statefulset.kubernetes.io/pod-name: memory-hub-0 }
           containers:
             - name: backup
-              image: ai-core-memory/hub:latest # same image as the hub: it already ships Python's sqlite3
+              image: ghcr.io/andyprosser/ai-core-memory-hub:latest # same image as the hub: it already ships Python's sqlite3
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities: { drop: ["ALL"] }

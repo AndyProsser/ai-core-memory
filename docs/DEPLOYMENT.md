@@ -24,6 +24,30 @@ The real definition is [`hub/Dockerfile`](../hub/Dockerfile) (build context: `hu
   wheel, so the container needs no network access at runtime other than what you configure
   (OIDC discovery, plugins).
 
+### Published image (GitHub Container Registry)
+
+[`.github/workflows/hub.yml`](../.github/workflows/hub.yml) tests the hub, builds this image, starts it as a smoke test
+(`/healthz` healthy, runs as uid 1000, `acm doctor` clean, unauthenticated `/mcp` refused) and only then publishes it
+to **`ghcr.io/andyprosser/ai-core-memory-hub`** for `linux/amd64` and `linux/arm64` (so Raspberry Pi k3s nodes work),
+with a provenance attestation and SBOM. It authenticates with the workflow's own `GITHUB_TOKEN`; no personal token
+or other secret is involved.
+
+| Trigger | Tags pushed |
+| --- | --- |
+| push to `main` | `latest`, `sha-<short commit>` |
+| tag `vX.Y.Z` | `X.Y.Z`, `X.Y`, `sha-<short commit>` |
+| pull request | nothing pushed; the image is still built and smoke-tested |
+
+```bash
+docker pull ghcr.io/andyprosser/ai-core-memory-hub:latest   # or podman pull
+git tag v0.1.0 && git push origin v0.1.0                       # cut a versioned release image
+```
+
+Pin a version or `sha-…` tag in production rather than `latest`. **First publish:** GitHub creates the package as
+*private*. If you want to pull it without credentials, open the package under the repository's *Packages*, then
+*Package settings → Change visibility → Public*; otherwise create an image-pull secret (a token with
+`read:packages`) and reference it from the StatefulSet's `imagePullSecrets`.
+
 > **Verification status:** the image has been **built and run** (Docker 29, vfs storage): it runs as uid 1000,
 > its `HEALTHCHECK` reports healthy, the database files are created `0600`, `acm setup-code` works inside it,
 > and `/mcp` rejects unauthenticated calls. Its pip steps needed this sandbox's TLS-intercepting proxy CA to be
@@ -120,7 +144,7 @@ plus `secret.example.yaml` and `ingress.example.yaml` (TLS — tokens and sessio
 ```bash
 kubectl create secret generic memory-hub-secrets \
   --from-literal=MEMORY_HUB_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
-# edit configmap.yaml (MEMORY_HUB_PUBLIC_URL), the image name, then:
+# edit configmap.yaml (MEMORY_HUB_PUBLIC_URL) and pin the image tag in statefulset.yaml + backup-cronjob.yaml, then:
 kubectl apply -k hub/deploy/k8s
 kubectl logs statefulset/memory-hub | grep "setup code"   # then finish first-run setup in the browser
 ```
@@ -162,5 +186,6 @@ This is ordinary infrastructure, not a feature the hub itself needs to implement
 
 ## Status
 
-The hub is built (see [`hub/README.md`](../hub/README.md)); the container image has not been built in the
-authoring environment — compose config validated, Kubernetes manifests structure-checked only. See [Roadmap](ARCHITECTURE.md#roadmap) for what's next.
+The hub is built (see [`hub/README.md`](../hub/README.md)). The image was built and run in the authoring
+environment (see above); the GitHub workflow that publishes it has not yet run on GitHub — check the first run's
+result under the repository's Actions tab. See [Roadmap](ARCHITECTURE.md#roadmap) for what's next.

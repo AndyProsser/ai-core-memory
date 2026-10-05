@@ -22,7 +22,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: memory-hub
-          image: ai-core-memory/hub:latest # build and push to your own registry; pin a tag
+          image: ghcr.io/andyprosser/ai-core-memory-hub:latest # published by .github/workflows/hub.yml; pin a version or sha-<short> tag in production
           imagePullPolicy: IfNotPresent
           ports:
             - { name: http, containerPort: 8000 }

@@ -5,7 +5,7 @@
 services:
   memory-hub:
     build: .
-    image: ai-core-memory/hub:latest
+    image: ghcr.io/andyprosser/ai-core-memory-hub:latest  # `docker compose pull` fetches the published image; `up --build` builds it locally instead
     restart: unless-stopped
     ports:
       # Loopback by default. To serve your LAN set MEMORY_HUB_BIND=0.0.0.0; for anything beyond a LAN put a TLS

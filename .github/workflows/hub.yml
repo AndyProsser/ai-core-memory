@@ -1,0 +1,118 @@
+# Test the hub, build its container image, and publish it to GitHub Container Registry.
+#   pull requests  -> test + build + smoke-test the image (nothing is pushed)
+#   push to main   -> the same, then push ghcr.io/<owner>/ai-core-memory-hub:latest and :sha-<short>
+#   tag vX.Y.Z     -> the same, then push :X.Y.Z, :X.Y and :latest
+name: hub
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["hub/**", ".github/workflows/hub.yml"]
+  pull_request:
+    paths: ["hub/**", ".github/workflows/hub.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: hub-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/ai-core-memory-hub
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: hub/pyproject.toml
+      - run: pip install -e '.[dev]'
+      - run: ruff check src tests examples
+      - run: ruff format --check src tests examples
+      - run: pytest -q -p no:warnings
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io with the workflow's own GITHUB_TOKEN; no personal token is involved
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3 # for the arm64 build (Raspberry Pi k3s nodes, Apple-silicon Docker)
+      - uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=ai-core-memory hub
+            org.opencontainers.image.description=Self-hosted memory hub for AI assistants (FastAPI, SQLite, MCP, web UI)
+            org.opencontainers.image.licenses=MIT
+
+      # Build the image for this runner first and prove it actually starts before anything is published.
+      - name: Build (amd64) for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: hub
+          load: true
+          tags: acm-hub:smoke
+          cache-from: type=gha
+      - name: Smoke test the image
+        run: |
+          docker run -d --name hub -p 8000:8000 \
+            -e MEMORY_HUB_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" \
+            -e MEMORY_HUB_PUBLIC_URL=http://localhost:8000 acm-hub:smoke
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/healthz && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/healthz
+          test "$(docker exec hub id -u)" = "1000" # never root
+          docker exec hub acm doctor
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8000/mcp)
+          test "$code" = "401" -o "$code" = "400" -o "$code" = "406" # unauthenticated MCP calls are refused
+          docker logs hub | tail -20
+          docker rm -f hub
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: hub
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
