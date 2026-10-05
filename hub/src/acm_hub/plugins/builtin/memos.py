@@ -7,7 +7,8 @@ versions. If your instance differs, the error shown in the Plugins screen says w
 from __future__ import annotations
 
 import re
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,7 @@ from ..base import BasePlugin, PluginContext, PluginInfo
 
 _TAG_RE = re.compile(r"(?<![\w/])#([A-Za-z][\w/-]*)")
 MAX_PAGES = 10
+DIGEST_MARKER = "# Memory digest"  # the heading of memos we write ourselves: never pulled back in as input
 
 
 class MemosConfig(BaseModel):
@@ -26,6 +28,10 @@ class MemosConfig(BaseModel):
     inbox_scope: Literal["user", "project", "team"] = "user"
     inbox_project: str = Field(default="", description="Project slug, when the inbox scope is project.")
     max_items: int = Field(default=100, ge=1, le=1000)
+    export_digest: bool = Field(
+        default=False,
+        description="Also post the weekly memory digest as a private memo (tagged #memory-hub).",
+    )
     allowed_hosts: list[str] = Field(default_factory=list)
 
 
@@ -42,7 +48,7 @@ class MemosPlugin(BasePlugin):
         key="memos",
         name="Memos",
         kind="source",
-        description="Captures memos with a chosen tag (default #memory) from a Memos server into your inbox.",
+        description="Captures memos with a chosen tag (default #memory) from a Memos server into your inbox, and can post the weekly digest back as a private memo.",
         config_schema=MemosConfig,
         secret_names=["token"],
         secret_help={
@@ -80,6 +86,8 @@ class MemosPlugin(BasePlugin):
             for memo in data.get("memos", []):
                 seen += 1
                 content = str(memo.get("content") or "")
+                if content.lstrip().startswith(DIGEST_MARKER):
+                    continue  # our own digest: don't capture the hub's output as if it were a note
                 tags = {str(t).lstrip("#").lower() for t in (memo.get("tags") or [])} | {
                     t.lower() for t in _TAG_RE.findall(content)
                 }
@@ -93,3 +101,31 @@ class MemosPlugin(BasePlugin):
             page_token = data.get("nextPageToken") or data.get("next_page_token") or ""
             if not page_token:
                 return
+
+    def export_digest(self, ctx: PluginContext, digest: dict[str, Any]) -> None:
+        c: MemosConfig = ctx.config  # type: ignore[assignment]
+        token = ctx.secrets.get("token")
+        if not token:
+            raise RuntimeError("The access-token environment variable isn't set.")
+        day = datetime.now(UTC).strftime("%Y-%m-%d")
+        lines = [
+            f"{DIGEST_MARKER} {day}",
+            "",
+            f"- {digest['new']} new, {digest['changed']} changed, {digest['superseded']} replaced, {digest['went_stale']} went stale",
+            f"- {digest['pending_proposals']} proposal(s) waiting for review; {digest['inbox_waiting']} inbox item(s)",
+        ]
+        if digest.get("new_names"):
+            lines += ["", "New: " + ", ".join(digest["new_names"])]
+        if digest.get("changed_names"):
+            lines += ["Changed: " + ", ".join(digest["changed_names"])]
+        lines += ["", f"Review: {ctx.public_url}{digest.get('link', '/review')}", "", "#memory-hub"]
+        r = ctx.http.post(
+            f"{c.base_url.rstrip('/')}/api/v1/memos",
+            json={
+                "content": "\n".join(lines),
+                "visibility": "PRIVATE",
+            },  # a digest is for its owner, never public
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"Memos returned HTTP {r.status_code} when posting the digest")

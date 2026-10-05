@@ -364,12 +364,35 @@ to the wrong Slack channel can't be un-posted.
   failures, hangs and floods are isolated and rate-limited.
 - _Tested by mutation:_ removing the user-scope acknowledgement check, the owner-visibility check, secret
   redaction, or the Obsidian path guards makes the corresponding tests fail.
-- _Limits, stated plainly:_ plugins are **trusted code running in the hub process** — an installed plugin
-  could do anything the hub process can; the guards above constrain plugins that use the provided context,
-  not a malicious one. `apprise` does its own HTTP (the hub validates the URLs it is given, but doesn't proxy
+- _Limits, stated plainly:_ in-process plugins are **trusted code running in the hub process** — an installed
+  plugin could do anything the hub process can; the guards above constrain plugins that use the provided context,
+  not a malicious one. **Remote plugins** (below) remove that limit for code you don't trust. `apprise` does its own HTTP (the hub validates the URLs it is given, but doesn't proxy
   the traffic). A hung plugin call is abandoned, not killed. The plugin scheduler is in-process, so run a
   single hub process. Nothing stops an operator from choosing `egress: full` and a public channel, so the
   Plugins screen flags full-text and personal-memory instances loudly.
+
+### Remote plugins: running code you don't trust
+
+A remote plugin (see [PLUGINS.md § Remote plugins](PLUGINS.md#remote-out-of-process-plugins)) is a separate service the
+hub calls over HTTP, so a hostile or buggy one has no way into the hub's process, memory, environment or database:
+
+- **Operator-registered only.** Services come from `MEMORY_HUB_REMOTE_PLUGINS[_FILE]`; the UI and database can't add
+  one, and a registration that collides with a built-in or installed plugin is refused.
+- **Mutual authentication.** Every request carries a timestamped HMAC-SHA256 signature the service verifies (5-minute
+  replay window), and every response must carry a valid signature back, so a service on a plain-HTTP LAN can't be
+  impersonated or its answers altered undetected. The signing key is a ≥32-character secret referenced by
+  environment-variable name; it is the only secret the hub holds for a remote plugin.
+- **The hub, not the service, decides what the service sees.** The same deny-by-default scope allowlist, `metadata`
+  egress, owner-visibility check and user-scope acknowledgement run before an event is serialised. A source's
+  service returns items; the hub writes them, and the service never receives a token, inbox writer or database handle.
+- **Untrusted answers.** Responses are size-capped, parsed against a strict schema, and bounded (200 items per pull,
+  capped field lengths). Captured items are marked external and can't be promoted automatically.
+- **No credentials in the hub.** The service's own third-party credentials live in its environment, never in the hub's.
+- **Same egress rules.** The URL must be https or a local/private address, redirects are never followed.
+
+_Limits:_ a service that you point at `egress: full` still receives that text — isolation protects the hub from the
+plugin, not the data you chose to send it. A service can lie about its own results (a feed reader can invent items);
+that is why they land in the inbox as untrusted input.
 
 ## Proposals: AI suggestions, human decisions
 

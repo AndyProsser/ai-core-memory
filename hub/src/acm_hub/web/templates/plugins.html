@@ -9,8 +9,8 @@
 {{ settings_tabs('plugins') }}
 <p class="muted">Bring notes in, send notifications out.</p>
 <div class="warning small">
-  Plugins are Python code installed on this hub, so install only ones you trust. They only ever see what you allow below (nothing by default),
-  secrets are never stored here — you give the <em>name</em> of an environment variable — and anything a plugin brings in lands in your inbox, never straight into memory.
+  Built-in and installed plugins are Python code running inside this hub, so install only ones you trust; <em>remote</em> plugins run as separate services and share nothing with it.
+  Either way they only see what you allow below (nothing by default), secrets are never stored here — you give the <em>name</em> of an environment variable — and anything a plugin brings in lands in your inbox, never straight into memory.
 </div>
 
 <h2>Your plugins</h2>
@@ -20,9 +20,10 @@
   <tbody>
   {% for r in rows %}{% set i = r.i %}
   <tr>
-    <td><a href="/plugins/{{ i.id }}"><strong>{{ i.name }}</strong></a><div class="small muted">{{ r.plugin.info.name if r.plugin else i.plugin_key ~ ' (not installed)' }}</div></td>
+    <td><a href="/plugins/{{ i.id }}"><strong>{{ i.name }}</strong></a><div class="small muted">{{ r.plugin.info.name if r.plugin else i.plugin_key ~ (' (service unreachable)' if r.unreachable else ' (not installed)') }}{% if r.plugin and r.plugin.remote %} · <span class="badge">runs outside the hub</span>{% endif %}</div>{% if r.unreachable %}<div class="small wrap">{{ r.unreachable }}</div>{% endif %}</td>
     <td>
-      {% if not r.plugin %}<span class="badge stale">not installed</span>
+      {% if not r.plugin and r.unreachable %}<span class="badge stale">service unreachable</span>
+      {% elif not r.plugin %}<span class="badge stale">not installed</span>
       {% elif i.enabled %}<span class="badge confirmed">on</span>{% else %}<span class="badge">off</span>{% endif %}
       {% if i.last_status == 'error' %}<span class="badge stale">failing</span>{% elif i.last_status == 'ok' %}<span class="badge established">ok</span>{% endif %}
       <div class="small muted">{% if i.last_run_at %}last run {{ i.last_run_at|datetime }} UTC{% else %}never run{% endif %}</div>
@@ -46,9 +47,21 @@
 {% for p in available %}
 <div class="card">
   <strong>{{ p.info.name }}</strong>
-  <span class="badge">{{ {'source': 'brings notes in', 'sink': 'sends notifications', 'both': 'both ways'}[p.info.kind] }}</span>
+  <span class="badge">{{ {'source': 'brings notes in', 'sink': 'sends notifications', 'both': 'both ways'}[p.info.kind] }}</span>{% if p.remote %} <span class="badge">runs outside the hub</span>{% endif %}
   <p class="desc">{{ p.info.description }}</p>
   <a class="btn" href="/plugins/new?plugin={{ p.info.key }}">Add</a>
 </div>
 {% endfor %}
+{% if services or remote_errors %}
+<h2>Remote plugin services</h2>
+<p class="muted small">Registered by the operator in the hub's environment. They are contacted in the background, never while a page loads.</p>
+{% for e in remote_errors %}<div class="error small" role="alert">{{ e }}</div>{% endfor %}
+{% if services %}
+<table><thead><tr><th>Service</th><th>Address</th><th>Status</th></tr></thead><tbody>
+{% for s in services %}<tr><td class="mono">{{ s.key }}</td><td class="small mono">{{ s.url }}</td>
+<td>{% if s.ok %}<span class="badge established">reachable</span>{% else %}<span class="badge stale">unreachable</span><div class="small wrap">{{ s.error }}</div>{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+<form method="post" action="/plugins/remote/refresh">{{ csrf() }}<button type="submit">Check now</button></form>
+{% endif %}
+{% endif %}
 {% endblock %}

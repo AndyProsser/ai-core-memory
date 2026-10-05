@@ -690,8 +690,12 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
       rate limits) + plugin loader (entry points) + Plugins screen + `acm plugins` off-switch
 - [x] Sinks: Apprise-based notifier (Slack, Teams, ntfy, email, …) and a signed webhook
 - [x] Sources: Obsidian vault and Memos connectors (inbox in); Obsidian weekly digest out
-- [ ] Memos digest export; a source for other note systems (Readwise, a git notes repo, …)
-- [ ] Out-of-process plugins (webhook/MCP-based) for people who don't want third-party code in the hub process
+- [x] Memos digest export (Phase 6)
+- [x] Out-of-process plugins for code you don't trust (Phase 6): see
+      [docs/PLUGINS.md § Remote plugins](PLUGINS.md#remote-out-of-process-plugins)
+- [ ] Further note sources. A "git notes repo" is a folder of markdown, which the Obsidian source already reads; a
+      Readwise source is not built (its API couldn't be exercised from the authoring environment), though it
+      would be a small remote plugin — `hub/examples/remote-feed/` shows the shape
 
 **Phase 4 — teams and distribution** (built)
 
@@ -721,6 +725,14 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
       CSRF token (a template-import bug the in-process tests couldn't see). Regression test plus opt-in browser
       scripts in `hub/tests/e2e/` (see [docs/UI.md § Testing](UI.md#testing))
 - [ ] A real claude.ai connector sign-in (needs a public HTTPS URL), and applying the manifests to a cluster
+
+**Phase 6 — trust boundaries and search** (in progress)
+
+- [x] 6a — Remote (out-of-process) plugins: signed JSON protocol, operator-registered services, mutual HMAC
+      authentication, strict validation of everything a service returns, an RSS/Atom example service, Memos digest
+      export
+- [ ] 6b — Optional embedding index, as a plugin (never a core dependency)
+- [ ] 6c — Encryption at rest for private (user-scope) record bodies
 
 **Later / optional**
 

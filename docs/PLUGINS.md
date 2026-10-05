@@ -173,12 +173,86 @@ Honest notes on each:
   `nextPageToken` paging) and tested against a mock of that shape — **it has not been run against every
   Memos release**, and Memos has changed this API between versions. If your server differs, the error shown
   in the Plugins screen says what it returned (e.g. `Memos returned HTTP 404 for /api/v1/memos`). Tag
-  matching works on either the API's `tags` field or inline `#tags` in the content. Digest export to Memos is
-  not built.
+  matching works on either the API's `tags` field or inline `#tags` in the content. With `export_digest` on, the
+  weekly digest is posted back as a **private** memo (`POST /api/v1/memos`, tagged `#memory-hub`); the pull skips
+  memos that start with the digest heading so the hub never captures its own output as input. Like the pull, the
+  digest call is written against the documented v1 shape and tested against a mock.
 
 Ideas that fit the same interface without a new design: a `readwise`/`pocket` source, a
 `git` source that watches a notes repo, an `embeddings` plugin offering vector search
 over records, a `calendar` sink for review reminders.
+
+## Remote (out-of-process) plugins
+
+An in-process plugin is trusted code running inside the hub: it shares the hub's memory, environment and database
+file, and the narrow `PluginContext` is a convention a malicious plugin can ignore. A **remote plugin** is the way to
+run code you don't fully trust — or code in another language, with its own credentials, on another host. It is a small
+HTTP service the hub talks to; it shares nothing with the hub process.
+
+```text
+ hub process ──signed JSON over HTTPS/LAN──►  plugin service   (its own process, host, language, secrets)
+   decides what it may see                    holds its own third-party credentials
+   writes inbox items itself                  never gets a database handle, token, or the hub's environment
+```
+
+**What changes versus an in-process plugin**
+
+- The plugin's third-party credentials (a Slack token, a Readwise key) live in **its own environment** — the hub never
+  sees or stores them. The only secret the hub holds is the shared signing key for talking to the service, referenced
+  by environment-variable name like every other secret.
+- A source's pull **returns items**; the hub writes them to the inbox. The plugin is never handed an inbox writer, a
+  token, or any way to reach the store.
+- The hub still decides everything about *what* the plugin sees: the same scope/project allowlist, egress level
+  (`metadata` by default), owner-visibility check and user-scope acknowledgement apply before an event is serialised.
+- Registered by the **operator**, never from the UI or the database: `MEMORY_HUB_REMOTE_PLUGINS_FILE` (a JSON file —
+  convenient as a Kubernetes ConfigMap) or `MEMORY_HUB_REMOTE_PLUGINS` (inline JSON):
+
+```json
+[{"key": "feed", "url": "https://feed-plugin.internal:9000", "secret_env": "FEED_PLUGIN_SECRET"}]
+```
+
+`key` is lower-case `a-z0-9-` and can't collide with a built-in or entry-point plugin. `url` follows the egress rules
+(https, or http only to localhost/a private network; no redirects). `secret_env` names the environment variable holding
+the signing key, which must be at least 32 characters.
+
+**Protocol v1.** Every call is `POST <url>/acm/v1/<operation>` with a JSON body, except the manifest (`GET`). Calls
+are authenticated in both directions with HMAC-SHA256 over a timestamp and the exact body bytes:
+
+```text
+request headers:  X-ACM-Protocol: 1
+                  X-ACM-Timestamp: <unix seconds>
+                  X-ACM-Signature: sha256=hex(HMAC(secret, "<timestamp>." + body))
+response header:  X-ACM-Response-Signature: sha256=hex(HMAC(secret, "<timestamp>." + response body))
+```
+
+The service must reject a request whose signature is wrong or whose timestamp is more than 5 minutes off (replay
+window); the hub rejects a response without a valid signature, so a tampered answer over a plain-HTTP LAN is refused.
+
+| Operation | Request body | Response body |
+| --- | --- | --- |
+| `GET manifest` | — | `{protocol: 1, key, name, description, kind: "source"\|"sink"\|"both", config: [field…], default_events: […]}` |
+| `validate` | `{instance:{id,name}, config}` | `{ok: true}` or `{ok: false, error}` |
+| `deliver` (sinks) | `{instance, event:{id,type,created_at,link,payload}}` | `{ok, retry?: bool, message?}` |
+| `pull` (sources) | `{instance, config, since: iso8601\|null, limit}` | `{items: [{title, body?, external_ref?}], message?}` |
+| `digest` (sources, optional) | `{instance, config, digest}` | `{ok, message?}` |
+
+A manifest `config` field is `{name, type: "string"\|"integer"\|"boolean"\|"select"\|"list", label?, help?, required?,
+default?, options?}`; the Plugins form is generated from it exactly as for in-process plugins, and a field is never a
+secret (there are none to enter — the service holds them).
+
+Three field names have meaning to the hub, because it (not the service) files captured items and schedules digests: a
+source that wants captured items filed somewhere other than your personal inbox declares `inbox_scope` (a `select` of
+`user`/`project`/`team`) and `inbox_project`; one that wants the weekly digest declares a boolean `export_digest`.
+
+The hub treats everything a service returns as **untrusted input**: responses are size-capped (1 MB) and parsed against
+a strict schema, a pull is limited to 200 items with bounded title/body length, and captured items are marked
+`plugin:<key>` and external exactly like any source's, so they can't become a rule or core record on their own. Service
+failures are isolated like any plugin's: timeouts, retry with backoff, and an unreachable service means its deliveries
+**retry** (they are not "not installed"), with the reason shown in the Plugins screen.
+
+**Writing a service.** `acm_hub.plugins.remote_sdk` is a dependency-free helper (signing, verification, and an ASGI app
+factory); [`hub/examples/remote-feed/`](../hub/examples/remote-feed/README.md) is a complete working source — an RSS/Atom
+feed reader — you can copy. Nothing requires Python: any service that speaks the table above works.
 
 ## Plugins vs. AI clients that already have connectors
 

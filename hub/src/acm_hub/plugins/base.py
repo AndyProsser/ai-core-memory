@@ -99,6 +99,7 @@ class BasePlugin:
     under a timeout; an exception is a failed attempt, never a crash."""
 
     info: PluginInfo
+    remote: bool = False  # True for a plugin that runs as a separate service (plugins/remote.py)
 
     def validate(self, config: BaseModel) -> None:
         """Extra checks beyond the schema (e.g. a path must exist). Raise ValueError with a human message."""

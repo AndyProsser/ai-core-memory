@@ -78,6 +78,14 @@ class Settings:
     )
     oauth_refresh_days: int = field(default_factory=lambda: _int("MEMORY_HUB_OAUTH_REFRESH_DAYS", 60))
 
+    # Remote (out-of-process) plugins, registered by the operator only (docs/PLUGINS.md § Remote plugins).
+    remote_plugins_inline: str = field(
+        default_factory=lambda: os.environ.get("MEMORY_HUB_REMOTE_PLUGINS", "")
+    )
+    remote_plugins_file: str = field(
+        default_factory=lambda: os.environ.get("MEMORY_HUB_REMOTE_PLUGINS_FILE", "")
+    )
+
     @property
     def oidc_enabled(self) -> bool:
         return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)

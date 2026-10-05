@@ -31,7 +31,7 @@ from .models import (
     User,
     utcnow,
 )
-from .plugins import registry
+from .plugins import registry, remote
 from .plugins.base import BasePlugin, DeliveryResult, InboxWriter, PluginContext
 from .plugins.base import Event as PluginEvent
 from .plugins.egress import EgressClient, redact, redacting_logger
@@ -148,7 +148,11 @@ class DispatchStats:
 
 def _sink_capable(key: str) -> bool:
     p = registry.get(key)
-    return p is not None and p.info.kind in {"sink", "both"}
+    if p is None:
+        # A remote service that is down right now might be a sink. Queue its deliveries (they retry with backoff)
+        # rather than letting the event be fanned out once and lost; a source never subscribes to events anyway.
+        return remote.is_remote_key(key)
+    return p.info.kind in {"sink", "both"}
 
 
 def fan_out(session: Session, *, limit: int = 500, now: datetime | None = None) -> int:
@@ -179,6 +183,8 @@ def fan_out(session: Session, *, limit: int = 500, now: datetime | None = None) 
 def _attempt(session: Session, inst: PluginInstance, ev: Event) -> DeliveryResult:
     plugin = registry.get(inst.plugin_key)
     if plugin is None:
+        if (why := remote.unavailable_reason(inst.plugin_key)) is not None:
+            return DeliveryResult.retry_later(f"the plugin service is unavailable: {why}")
         return DeliveryResult.failed(f"plugin {inst.plugin_key!r} isn't installed")
     try:
         ctx = build_context(inst, plugin)
@@ -385,11 +391,24 @@ def run_pull(engine: Engine, instance_id: str) -> PullResult:
     with Session(engine) as s:
         inst = s.get(PluginInstance, instance_id)
         plugin = registry.get(inst.plugin_key) if inst else None
+        if inst is not None and plugin is None and (why := remote.unavailable_reason(inst.plugin_key)):
+            err = f"the plugin service is unavailable: {why}"
+            _record_outcome(s, inst, False, err, utcnow())
+            s.commit()
+            return PullResult(error=err)
         if inst is None or plugin is None or plugin.info.kind not in {"source", "both"}:
             return PullResult(error="Not a source plugin instance.")
         counter = [0]
         try:
             ctx = build_context(inst, plugin, inbox=InboxWriter(_inbox_adder(engine, inst, counter)))
+            if getattr(plugin, "remote", False):
+                # Tell the service where we got to, but only after a clean run: after a failure it must start over,
+                # or whatever it would have returned in between is silently skipped.
+                ctx.extras["since"] = (
+                    inst.last_run_at.isoformat() + "Z"
+                    if inst.last_status == "ok" and inst.last_run_at
+                    else None
+                )
             secrets = list(ctx.secrets.values())
             _call(lambda: plugin.pull(ctx), PULL_TIMEOUT)
             err = None

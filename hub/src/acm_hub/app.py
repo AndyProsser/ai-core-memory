@@ -26,6 +26,7 @@ from .db import make_engine, migrate
 from .mcp_server import current_principal, mcp
 from .mcp_server import state as mcp_state
 from .models import InstanceSettings
+from .plugins import remote as remote_plugins
 from .security import LoginThrottle, SlidingWindowLimiter
 
 log = logging.getLogger("acm_hub")
@@ -111,11 +112,20 @@ async def _consolidation_loop(
         await anyio.sleep(check_every)
 
 
+async def _remote_startup() -> None:
+    """Fetch remote plugins' manifests in the background so a slow or absent service never delays startup."""
+    try:
+        await anyio.to_thread.run_sync(lambda: remote_plugins.refresh_due(force=True))
+    except Exception:  # noqa: BLE001
+        log.exception("remote plugin startup check failed; the scheduler will retry")
+
+
 async def _plugin_loop(engine, *, first_delay: float = 15.0, every: float = 10.0) -> None:  # noqa: ANN001
     """Delivers queued events, pulls sources when due, sends weekly digests. Each tick is isolated from the last."""
     await anyio.sleep(first_delay)
     while True:
         try:
+            await anyio.to_thread.run_sync(remote_plugins.refresh_due)  # retries downed services with backoff
             out = await anyio.to_thread.run_sync(dispatcher.run_scheduled, engine)
             s = out["dispatch"]
             if s.delivered or s.dead or out["digests"] or any(p.captured or p.error for p in out["pulls"]):
@@ -173,6 +183,7 @@ def create_app(settings: Settings | None = None, *, http_client_factory=None) ->
             )
         async with mcp_asgi.router.lifespan_context(mcp_asgi), anyio.create_task_group() as tg:
             if settings.plugins_enabled:
+                tg.start_soon(_remote_startup)
                 tg.start_soon(_plugin_loop, engine)
             if settings.consolidate_interval_hours > 0:
                 tg.start_soon(_consolidation_loop, engine, settings.consolidate_interval_hours)
@@ -189,6 +200,7 @@ def create_app(settings: Settings | None = None, *, http_client_factory=None) ->
     )
     app.state.settings = settings
     app.state.engine = engine
+    remote_plugins.configure(settings)  # reads the operator's registration; contacts nothing yet
     app.state.token_limiter = SlidingWindowLimiter(settings.token_rate_limit_per_min)
     app.state.login_throttle = LoginThrottle()
     app.state.http_client_factory = http_client_factory or (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import anyio
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import col, select
@@ -12,7 +13,7 @@ from .. import dispatcher
 from .. import plugin_admin as pa
 from ..access import AccessError, NotFound
 from ..models import Event, PluginDelivery, PluginInstance, Project
-from ..plugins import registry
+from ..plugins import registry, remote
 from ..plugins.base import EVENT_TYPES
 from .deps import Ctx, notice_url, render, require_user, user_csrf
 
@@ -55,8 +56,34 @@ def plugins_list(request: Request, ctx: Ctx = Depends(require_user)):  # noqa: A
     rows = []
     for i in instances:
         p = registry.get(i.plugin_key)
-        rows.append({"i": i, "plugin": p, "secrets": _secret_status(p, i) if p else []})
-    return render(request, "plugins.html", ctx, rows=rows, available=registry.all_plugins())
+        rows.append(
+            {
+                "i": i,
+                "plugin": p,
+                "secrets": _secret_status(p, i) if p else [],
+                "unreachable": None if p else remote.unavailable_reason(i.plugin_key),
+            }
+        )
+    services = [
+        {"key": st.spec.key, "url": st.spec.url, "ok": st.plugin is not None, "error": st.error}
+        for st in remote.STATE.values()
+    ]
+    return render(
+        request,
+        "plugins.html",
+        ctx,
+        rows=rows,
+        available=registry.all_plugins(),
+        services=services,
+        remote_errors=list(remote.CONFIG_ERRORS),
+    )
+
+
+@router.post("/plugins/remote/refresh")
+def refresh_remote(ctx: Ctx = Depends(user_csrf)) -> RedirectResponse:
+    _admin(ctx)
+    remote.refresh_due(force=True)  # an admin's explicit request: contact every registered service now
+    return RedirectResponse(notice_url("/plugins", "Checked the remote plugin services."), status_code=303)
 
 
 def _form_ctx(ctx: Ctx, plugin, inst: PluginInstance, values: dict | None = None, errors=None):  # noqa: ANN001, ANN202
@@ -92,7 +119,8 @@ async def plugin_create(request: Request, ctx: Ctx = Depends(user_csrf)):  # noq
     _admin(ctx)
     form = await request.form()
     p = _plugin(str(form.get("plugin") or ""))
-    f = pa.parse_instance_form(ctx.db, p, form)
+    # validate() may call a remote service over the network: never on the event loop, which would stall the whole hub
+    f = await anyio.to_thread.run_sync(pa.parse_instance_form, ctx.db, p, form)
     inst = pa.default_instance(ctx.user, p)
     pa.apply_form(inst, f)
     if f.errors:
@@ -146,7 +174,8 @@ async def plugin_update(request: Request, iid: str, ctx: Ctx = Depends(user_csrf
     inst = _get(ctx, iid)
     p = _plugin(inst.plugin_key)
     form = await request.form()
-    f = pa.parse_instance_form(ctx.db, p, form)
+    # validate() may call a remote service over the network: never on the event loop, which would stall the whole hub
+    f = await anyio.to_thread.run_sync(pa.parse_instance_form, ctx.db, p, form)
     if f.errors:
         shadow = PluginInstance(
             **{

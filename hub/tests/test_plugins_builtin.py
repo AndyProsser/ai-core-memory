@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import threading
+from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import httpx
@@ -541,3 +542,65 @@ def test_scheduler_pulls_when_due_and_sends_digests_weekly(db, human, user, vaul
     assert dp.digests_due(db.get_bind(), t0 + timedelta(days=6)) == []
     assert dp.digests_due(db.get_bind(), t0 + timedelta(days=8)) == [sink.id]
     assert os.path.exists(str(vault))
+
+
+def test_memos_posts_the_weekly_digest_privately_and_never_reads_it_back(db, human, user, monkeypatch):
+    posted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posted.append(json.loads(request.content))
+            return httpx.Response(200, json={"name": "memos/99"})
+        return httpx.Response(
+            200,
+            json={
+                "memos": [
+                    {"name": "memos/99", "content": posted[0]["content"]},
+                    {"name": "memos/5", "content": "real note #memory"},
+                ]
+            },
+        )
+
+    egress.set_transport(httpx.MockTransport(handler))
+    monkeypatch.setenv("MEMOS_TOKEN", "memos-token-xyz")
+    i = inst(
+        db,
+        user,
+        "memos",
+        config={"base_url": "https://memos.example.com", "tag": "memory", "export_digest": True},
+        secret_refs={"token": "MEMOS_TOKEN"},
+        scopes=["project"],
+        events=[],
+    )
+    i.last_digest_at = utcnow() - timedelta(days=8)
+    db.add(i)
+    db.commit()
+    make_record(db, human, "this-weeks-rec")
+    assert dp.send_digest(db.get_bind(), i.id) is True
+    assert len(posted) == 1 and posted[0]["visibility"] == "PRIVATE"  # a digest is never public
+    assert "this-weeks-rec" in posted[0]["content"] and posted[0]["content"].startswith("# Memory digest")
+    assert "memos-token-xyz" not in json.dumps(
+        posted
+    )  # the token authenticates the call, it isn't in the content
+    # the digest memo carries the pull tag's neighbour but must not be captured back as input
+    assert dp.run_pull(db.get_bind(), i.id).captured == 1  # only the genuine note
+    assert set(items(db)) == {"https://memos.example.com/m/5"}
+
+
+def test_memos_digest_failure_is_reported_on_the_instance(db, human, user, monkeypatch):
+    egress.set_transport(httpx.MockTransport(lambda r: httpx.Response(500)))
+    monkeypatch.setenv("MEMOS_TOKEN", "memos-token-xyz")
+    i = inst(
+        db, user, "memos", config={"base_url": "https://memos.example.com", "export_digest": True},
+        secret_refs={"token": "MEMOS_TOKEN"}, scopes=[], events=[],
+    )  # fmt: skip
+    i.last_digest_at = utcnow() - timedelta(days=8)
+    db.add(i)
+    db.commit()
+    dp.send_digest(db.get_bind(), i.id)
+    db.refresh(i)
+    assert (
+        i.last_status == "error"
+        and "HTTP 500" in (i.last_error or "")
+        and "memos-token-xyz" not in i.last_error
+    )

@@ -14,3 +14,5 @@ data:
   # Let Claude.ai connectors sign in (MCP OAuth). Needs the https PUBLIC_URL above and an ingress that forwards
   # /.well-known/*, /authorize, /token, /register, /revoke and /oauth/consent. See docs/SECURITY.md § MCP OAuth.
   MEMORY_HUB_OAUTH_ENABLED: "false"
+  # Remote (out-of-process) plugins: a JSON list of {key, url, secret_env}; the signing keys go in the Secret.
+  # MEMORY_HUB_REMOTE_PLUGINS: '[{"key":"feed","url":"http://feed-plugin:9000","secret_env":"FEED_PLUGIN_SECRET"}]'
