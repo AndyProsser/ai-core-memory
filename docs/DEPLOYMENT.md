@@ -187,5 +187,5 @@ This is ordinary infrastructure, not a feature the hub itself needs to implement
 ## Status
 
 The hub is built (see [`hub/README.md`](../hub/README.md)). The image was built and run in the authoring
-environment (see above); the GitHub workflow that publishes it has not yet run on GitHub — check the first run's
-result under the repository's Actions tab. See [Roadmap](ARCHITECTURE.md#roadmap) for what's next.
+environment (see above), and the GitHub workflow that publishes it has run green on `main` (tests, image smoke
+test, multi-arch push). See [Roadmap](ARCHITECTURE.md#roadmap) for what's next.
