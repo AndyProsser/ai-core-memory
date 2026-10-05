@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, text
 from sqlmodel import Session, col, select
 
-from . import events
+from . import crypto, crypto_store, events
 from .access import (
     AccessError,
     NotFound,
@@ -43,6 +43,10 @@ SCOPES = ("project", "team", "user")
 CONFIDENCES = ("observed", "confirmed", "established")
 TIERS = ("core", "associated")
 STATUSES = ("active", "superseded", "stale", "archived")
+LOCKED_WRITE = (
+    "This is part of your encrypted private memory, and this credential can't read or write it. Unlock it in the web UI "
+    "(Settings → Account), or use a token or app that you allowed to access encrypted memory."
+)
 CHANGE_SOURCES = ("dream-cycle", "mcp-write", "import", "ui", "cli", "plugin", "mechanical", "api")
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
@@ -224,7 +228,9 @@ def _fts_sync(session: Session, rec: MemoryRecord) -> None:
             "id": rec.id,
             "n": rec.name.replace("-", " "),
             "d": rec.description,
-            "b": rec.body,
+            "b": ""
+            if rec.encrypted
+            else rec.body,  # encrypted text must never reach the (plaintext) search index
             "t": " ".join(rec.topics),
         },
     )
@@ -303,11 +309,16 @@ def _revision(
     flagged: bool = False,
     applied: bool = True,
 ) -> MemoryRevision:
+    # A locked record's body can't be copied (we only hold the placeholder): the snapshot is left empty. That loses nothing,
+    # because a locked write can't have changed the body, so it equals the previous revision's.
+    locked = bool(rec.encrypted) and rec.body == crypto.LOCKED
     rev = MemoryRevision(
         memory_record_id=rec.id,
         name=rec.name,
         description=rec.description,
-        body=rec.body,
+        body="" if locked else rec.body,
+        encrypted=bool(rec.encrypted),
+        key_user_id=rec.user_id if rec.encrypted else None,
         type=rec.type,
         scope=rec.scope,
         confidence=rec.confidence,
@@ -348,6 +359,10 @@ def write_record(
     if p.read_only:
         raise AccessError("This credential is read-only.")
     _validate_fields(data)
+    if data.body is not None and data.body == crypto.LOCKED:
+        raise ValidationFailed(
+            "That text is the 'locked' placeholder, not a real body; it can't be saved over a record."
+        )
     if p.is_system and not data.id:
         raise ValidationFailed("The mechanical job only edits existing records, by id.")
     existing = _find_existing(session, p, data)
@@ -431,6 +446,12 @@ def _create(
     )
     if fixed_id and session.get(MemoryRecord, fixed_id) is None:
         rec.id = fixed_id  # restores keep their ids so links between records survive a round trip
+    if rec.scope == "user" and crypto_store.has_encryption(session, user_id):
+        # This person encrypts their private memory. A credential that can't encrypt must be refused, never allowed to
+        # fall back to storing plaintext.
+        if crypto_store.key_for(session, user_id) is None:
+            raise AccessError(LOCKED_WRITE)
+        rec.encrypted = True
     if not can_write(session, p, rec):
         raise AccessError("You can't write there.")
     if rec.tier == "core":
@@ -516,6 +537,10 @@ def _update(
             raise ValidationFailed(f"A record named {incoming['name']!r} already exists here.")
 
     changed = {f: v for f, v in incoming.items() if getattr(rec, f) != v}
+    if rec.encrypted and "body" in changed and crypto_store.key_for(session, rec.user_id) is None:
+        raise AccessError(
+            LOCKED_WRITE
+        )  # can't seal a new body without the key (and the placeholder isn't a real one)
     links_changed = data.links is not None and set(data.links) != set(
         session.exec(
             select(MemoryLink.to_id).where(MemoryLink.from_id == rec.id, MemoryLink.kind == "related")

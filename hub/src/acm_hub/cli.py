@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import text
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, func, select
 
-from . import __version__, orgs
+from . import __version__, crypto_store, orgs
 from . import compile as compile_mod
 from . import oauth as oauth_mod
 from . import proposals as proposals_mod
@@ -64,7 +64,7 @@ def _open() -> Session:
     return s
 
 
-def _actor(db: Session, email: str | None) -> Principal:
+def _actor(db: Session, email: str | None, args: argparse.Namespace | None = None) -> Principal:
     import os
 
     email = email or os.environ.get("ACM_USER")
@@ -79,7 +79,26 @@ def _actor(db: Session, email: str | None) -> Principal:
         if len(users) > 1:
             raise CliError(f"More than one user: {EMAIL_HINT}.")
         user = users[0]
-    return principal_for_user(db, user, kind="cli", label=getpass.getuser())
+    p = principal_for_user(db, user, kind="cli", label=getpass.getuser())
+    if args is not None and getattr(args, "unlock", False):
+        _unlock(db, p)
+    return p
+
+
+def _unlock(db: Session, p: Principal) -> None:
+    """Open this person's encrypted private memory for the one command being run (--unlock)."""
+    import os
+
+    from . import crypto_store, keys
+
+    if not keys.is_enabled(db, p.user_id):
+        return  # nothing is encrypted, so there is nothing to unlock
+    passphrase = os.environ.get("ACM_PASSPHRASE") or getpass.getpass("Memory passphrase: ")
+    dek = keys.unlock(db, p.user_id, passphrase)
+    if dek is None:
+        raise CliError("That isn't your memory passphrase.")
+    p.dek = dek
+    crypto_store.attach_keys(db, p.user_id, dek)
 
 
 def _password(args: argparse.Namespace) -> str:
@@ -158,7 +177,7 @@ def cmd_user_set_password(args: argparse.Namespace) -> int:
 
 def cmd_token_create(args: argparse.Namespace) -> int:
     with _open() as db:
-        p = _actor(db, args.user)
+        p = _actor(db, args.user, args)
         user = db.get(User, p.user_id)
         project_ids = []
         for slug in args.project or []:
@@ -187,7 +206,7 @@ def cmd_token_create(args: argparse.Namespace) -> int:
 
 def cmd_token_list(args: argparse.Namespace) -> int:
     with _open() as db:
-        p = _actor(db, args.user)
+        p = _actor(db, args.user, args)
         for t in db.exec(
             select(ApiToken).where(ApiToken.user_id == p.user_id).order_by(col(ApiToken.created_at))
         ).all():
@@ -220,7 +239,7 @@ def _brief(db: Session, r: MemoryRecord) -> str:
 
 def cmd_list(args: argparse.Namespace) -> int:
     with _open() as db:
-        p = _actor(db, args.user)
+        p = _actor(db, args.user, args)
         rows = list_records(
             db,
             p,
@@ -243,7 +262,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     from .exportimport import render_record
 
     with _open() as db:
-        p = _actor(db, args.user)
+        p = _actor(db, args.user, args)
         r = get_record(db, p, args.ref, project=args.project)
         print(render_record(db, r))
         if args.history:
@@ -259,7 +278,7 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 def cmd_edit(args: argparse.Namespace) -> int:
     with _open() as db:
-        p = _actor(db, args.user)
+        p = _actor(db, args.user, args)
         r = get_record(db, p, args.ref, project=args.project)
         body = None
         if args.body_file:
@@ -286,7 +305,7 @@ def cmd_edit(args: argparse.Namespace) -> int:
 
 def cmd_export(args: argparse.Namespace) -> int:
     with _open() as db:
-        p = _actor(db, args.user)
+        p = _actor(db, args.user, args)
         files = export_files(
             db,
             p,
@@ -322,7 +341,7 @@ def cmd_import(args: argparse.Namespace) -> int:
         else (read_zip(path.read_bytes()) if path.suffix == ".zip" else {path.name: path.read_bytes()})
     )
     with _open() as db:
-        p = _actor(db, args.user)
+        p = _actor(db, args.user, args)
         report = import_files(db, p, files, apply=args.apply, change_source="cli")
         for i in report.items:
             print(f"{i.action:<9} {i.name}" + (f"  — {i.detail}" if i.detail else ""))
@@ -386,7 +405,7 @@ def cmd_reindex(args: argparse.Namespace) -> int:
 def cmd_consolidate(args: argparse.Namespace) -> int:
     """The mechanical pass: decay, duplicate candidates, core budget, review reminders. Instance-wide unless --as."""
     with _open() as db:
-        scope_to = _actor(db, args.user) if args.user else None
+        scope_to = _actor(db, args.user, args) if args.user else None
         rep = run_consolidation(db, scope_to=scope_to, dry_run=args.dry_run)
         if not args.dry_run:
             db.commit()
@@ -424,7 +443,7 @@ def _print_proposal(db: Session, prop, *, detail: bool = False) -> None:  # noqa
 
 def cmd_review(args: argparse.Namespace) -> int:
     with _open() as db:
-        p = _actor(db, args.user)
+        p = _actor(db, args.user, args)
         sub = args.rcmd or "list"
         if sub == "list":
             rows = proposals_mod.list_proposals(db, p, status=None if args.all else "pending")
@@ -495,7 +514,7 @@ def _user(db: Session, email: str) -> User:
 
 def cmd_user_admin(args: argparse.Namespace) -> int:
     with _open() as db:
-        actor = _actor(db, args.user)
+        actor = _actor(db, args.user, args)
         user = _user(db, args.email)
         if args.ucmd in ("deactivate", "activate"):
             orgs.set_user_active(db, actor, user, args.ucmd == "activate")
@@ -526,7 +545,7 @@ def _team(db: Session, slug: str):  # noqa: ANN202
 
 def cmd_team(args: argparse.Namespace) -> int:
     with _open() as db:
-        actor = _actor(db, args.user)
+        actor = _actor(db, args.user, args)
         sub = args.tcmd
         if sub in (None, "list"):
             for t in orgs.visible_teams(db, actor):
@@ -571,7 +590,7 @@ def cmd_team(args: argparse.Namespace) -> int:
 
 def cmd_project(args: argparse.Namespace) -> int:
     with _open() as db:
-        actor = _actor(db, args.user)
+        actor = _actor(db, args.user, args)
         sub = args.pcmd
         if sub in (None, "list"):
             for pr in orgs.visible_projects(db, actor):
@@ -636,7 +655,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
             )
     else:
         with _open() as db:
-            p = _actor(db, args.user)
+            p = _actor(db, args.user, args)
             items = [
                 compile_mod.Item(
                     name=r.name,
@@ -650,6 +669,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
                     project=project_slug(db, r),
                 )
                 for r in list_records(db, p, status="active", limit=100_000)
+                if not crypto_store.is_locked(r)  # a locked record has nothing to compile
             ]
     chosen = compile_mod.select_items(
         items,
@@ -680,7 +700,7 @@ def cmd_oauth(args: argparse.Namespace) -> int:
     from .models import OAuthClient, OAuthGrant
 
     with _open() as db:
-        actor = _actor(db, args.user)
+        actor = _actor(db, args.user, args)
         everyone = getattr(args, "all_users", False)
         if everyone and not actor.is_admin:
             raise AccessError("Only an admin can look at everyone's connected apps.")
@@ -716,6 +736,74 @@ def cmd_oauth(args: argparse.Namespace) -> int:
     return 0
 
 
+def _secret_reader(args: argparse.Namespace):  # noqa: ANN202
+    """Passphrases come from prompts, or, with --passphrase-stdin, one per line from standard input (scripting/tests)."""
+
+    def read(prompt: str, *, confirm: bool = False) -> str:
+        if args.passphrase_stdin:
+            return sys.stdin.readline().rstrip("\n")
+        value = getpass.getpass(prompt)
+        if confirm and value != getpass.getpass("Confirm: "):
+            raise CliError("The passphrases don't match.")
+        return value
+
+    return read
+
+
+def cmd_key(args: argparse.Namespace) -> int:
+    """Manage encrypted private memory from the host (docs/SECURITY.md § Encrypted private memory)."""
+    from . import keys
+
+    read = _secret_reader(args)
+    with _open() as db:
+        actor = _actor(db, args.user)
+        user = db.get(User, actor.user_id)
+        sub = args.kcmd
+        if sub in (None, "status"):
+            uk = keys.get_keys(db, user.id)
+            if uk is None:
+                print("Encrypted private memory is off.")
+            else:
+                n = db.exec(
+                    select(func.count())
+                    .select_from(MemoryRecord)
+                    .where(MemoryRecord.user_id == user.id, col(MemoryRecord.encrypted).is_(True))
+                ).one()
+                print(
+                    f"Encrypted private memory is on since {uk.created_at:%Y-%m-%d}: {n} record(s) encrypted."
+                )
+            return 0
+        if sub == "enable":
+            res = keys.enable(db, user, read("New memory passphrase: ", confirm=True))
+            db.commit()
+            keys.scrub(db)
+            print(f"Encrypted {res.records} private record(s).")
+            print(
+                "Recovery key (shown once; write it down — without it and the passphrase nothing can be recovered):"
+            )
+            print(res.recovery_key)
+        elif sub == "change-passphrase":
+            old = read("Current memory passphrase: ")
+            keys.change_passphrase(db, user, old, read("New memory passphrase: ", confirm=True))
+            db.commit()
+            print("Memory passphrase changed. Your recovery key still works.")
+        elif sub == "recovery-key":
+            text = keys.regenerate_recovery_key(db, user, read("Memory passphrase: "))
+            db.commit()
+            print("New recovery key (shown once; the old one no longer works):")
+            print(text)
+        elif sub == "recover":
+            recovery = read("Recovery key: ") if args.passphrase_stdin else input("Recovery key: ")
+            keys.recover(db, user, recovery, read("New memory passphrase: ", confirm=True))
+            db.commit()
+            print("Recovered. The new passphrase is set.")
+        elif sub == "disable":
+            n = keys.disable(db, user, read("Memory passphrase: "))
+            db.commit()
+            print(f"Encryption is off. {n} private record(s) are stored as plain text again.")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -746,6 +834,11 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(fn=fn)
         if user:
             p.add_argument("--as", dest="user", metavar="EMAIL", help=f"act as this user ({EMAIL_HINT})")
+            p.add_argument(
+                "--unlock",
+                action="store_true",
+                help="open your encrypted private memory for this command (asks for the passphrase, or ACM_PASSPHRASE)",
+            )
         return p
 
     add("migrate", cmd_migrate, "create/upgrade the database schema", user=False)
@@ -981,6 +1074,23 @@ def build_parser() -> argparse.ArgumentParser:
     orv.add_argument("--all-users", action="store_true", help="with --all: everyone's grants (admin)")
     for leaf in (ol, orv):
         leaf.add_argument("--as", dest="user", metavar="EMAIL", help=f"act as this user ({EMAIL_HINT})")
+
+    ky = sub.add_parser("key", help="manage encrypted private memory (passphrase, recovery key)")
+    ky.set_defaults(fn=cmd_key, kcmd=None, user=None, passphrase_stdin=False)
+    ksub = ky.add_subparsers(dest="kcmd")
+    for name, help_ in (
+        ("status", "is it on?"),
+        ("enable", "encrypt your private memory under a new passphrase (prints a recovery key once)"),
+        ("change-passphrase", "change the memory passphrase"),
+        ("recovery-key", "replace the recovery key (prints the new one once)"),
+        ("recover", "forgot the passphrase: set a new one with the recovery key"),
+        ("disable", "decrypt your private memory back to plain text on disk"),
+    ):
+        kp = ksub.add_parser(name, help=help_)
+        kp.add_argument("--as", dest="user", metavar="EMAIL", help=f"act as this user ({EMAIL_HINT})")
+        kp.add_argument(
+            "--passphrase-stdin", action="store_true", help="read secrets one per line from stdin"
+        )
 
     return ap
 

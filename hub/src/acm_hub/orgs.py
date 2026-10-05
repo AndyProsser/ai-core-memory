@@ -141,6 +141,7 @@ def set_user_active(session: Session, actor, user: User, active: bool) -> None: 
             select(ApiToken).where(ApiToken.user_id == user.id, col(ApiToken.revoked_at).is_(None))
         ).all():
             tok.revoked_at = utcnow()
+            tok.wrapped_dek = None
             session.add(tok)
         from .models import OAuthGrant
         from .oauth import revoke_grant

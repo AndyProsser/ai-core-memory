@@ -50,6 +50,7 @@ def _consent_page(
         loopback=oauth.is_loopback_redirect(req.redirect_uri),
         projects=visible_projects(ctx.db, ctx.principal),
         wants_write=oauth.SCOPE_WRITE in req.scopes,
+        offer_encrypted=ctx.dek is not None,  # they've turned encryption on AND unlocked this session
         error=error,
     )
     # The page's form-action decides where the approval redirect may go; allow only this request's own origin
@@ -74,7 +75,9 @@ def consent_form(request: Request, db: Session = Depends(get_db)):  # noqa: ANN2
             f"/login?next={quote('/oauth/consent?request=' + quote(rid))}", status_code=303
         )
     user, ws = found
-    ctx = Ctx(db, user, ws, principal_for_user(db, user, kind="session"), request)
+    principal = principal_for_user(db, user, kind="session")
+    principal.dek = request.app.state.unlock_cache.get(ws.id, user.id)
+    ctx = Ctx(db, user, ws, principal, request, principal.dek)
     return _consent_page(request, ctx, _load_request(db, rid))
 
 
@@ -87,6 +90,7 @@ def consent_decide(  # noqa: ANN201
     projects: list[str] = Form(default_factory=list),
     user_scope: str = Form(""),
     access: str = Form("read_only"),
+    include_encrypted: str = Form(""),
     ctx: Ctx = Depends(user_csrf),
 ):
     _enabled(request)
@@ -118,6 +122,14 @@ def consent_decide(  # noqa: ANN201
             return _consent_page(
                 request, ctx, req, error="Pick at least one project, or choose all of them.", status=422
             )
+    if include_encrypted and (ctx.dek is None or not user_scope):
+        return _consent_page(
+            request,
+            ctx,
+            req,
+            error="Opening encrypted memory needs it unlocked in this session and personal memory included.",
+            status=422,
+        )
     code = oauth.approve(
         ctx.db,
         ctx.user,
@@ -125,6 +137,7 @@ def consent_decide(  # noqa: ANN201
         project_ids=project_ids,
         include_user_scope=bool(user_scope),
         access_level=access,
+        dek=ctx.dek if include_encrypted else None,  # only on an explicit, informed choice
     )
     ctx.db.commit()
     return RedirectResponse(

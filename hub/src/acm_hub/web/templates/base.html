@@ -34,6 +34,7 @@
   </nav>
   <main id="main">
     {% if notice %}<div class="notice" role="status">{{ notice }}</div>{% endif %}
+    {% if locked_notice and not request.url.path.startswith('/settings') %}<div class="notice" role="status">🔒 Your encrypted private memory is locked, so its text shows as locked. <a href="/settings">Unlock it in Settings</a>.</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
 </div>

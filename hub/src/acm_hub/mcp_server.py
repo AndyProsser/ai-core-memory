@@ -17,6 +17,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
+from . import crypto_store
 from . import proposals as proposals_mod
 from .access import AccessError, NotFound, Principal
 from .consolidate import build_work_package
@@ -84,6 +85,9 @@ async def _run(fn: Callable[[Session, Principal], Any]) -> Any:
 
     def work() -> Any:
         with Session(engine) as s:
+            crypto_store.attach_keys(
+                s, p.user_id, p.dek
+            )  # only a token the person allowed gets to open encrypted memory
             try:
                 out = fn(s, p)
                 s.commit()

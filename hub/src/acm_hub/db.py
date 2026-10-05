@@ -14,6 +14,7 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
+from . import crypto_store  # noqa: F401 — registers the ORM listeners that enforce encrypted-body handling
 from .config import Settings
 
 

@@ -23,6 +23,7 @@ One Python process, one SQLite file. No external services.
 | Teams/users/projects roles + UI + CLI, Claude Code plugin, `hub-sync` skill, `acm compile`, k8s manifests | built (Phase 4) |
 | Remote (out-of-process) plugins with signed HTTP, an example service, Memos digest export | built (Phase 6a) |
 | Optional embedding index as a plugin (`search` kind, reconciliation, owner-only fusion into focus, example service) | built (Phase 6b) |
+| Encrypted private memory: per-user AES-256-GCM data key, passphrase + recovery key, unlock per web session / token / `acm --unlock`, `acm key …` | built (Phase 6c) |
 | Image built and run, plugin live-tested, per-session core budget, session-only JSON API (`/api/v1`), optional MCP OAuth for Claude.ai connectors (`acm oauth`) | built (Phase 5) |
 
 ## Run it

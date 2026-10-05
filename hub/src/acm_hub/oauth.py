@@ -34,6 +34,7 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from sqlalchemy import update
 from sqlmodel import Session, col, select
 
+from . import crypto
 from .config import Settings
 from .models import ApiToken, OAuthClient, OAuthCode, OAuthGrant, OAuthRequest, User, utcnow
 from .security import generate_api_token, hash_token
@@ -294,8 +295,10 @@ class HubOAuthProvider:
             s.add(grant)
             s.flush()
             row.grant_id = grant.id
+            dek = crypto.unwrap_from_secret(authorization_code.code, row.wrapped_dek, "oauth-code")
+            row.wrapped_dek = None  # the code's copy of the key is single-use too
             s.add(row)
-            return _token_response(s, self.settings, grant, user, raw_refresh)
+            return _token_response(s, self.settings, grant, user, raw_refresh, dek=dek)
 
         return await self._db(go)
 
@@ -348,11 +351,13 @@ class HubOAuthProvider:
             user = s.get(User, grant.user_id)
             if user is None or not user.is_active:
                 raise TokenError("invalid_grant", "The account that approved this is no longer active.")
+            # The key travels with the refresh chain: opened with the token being presented, re-wrapped for the next one.
+            dek = crypto.unwrap_from_secret(refresh_token.token, grant.wrapped_dek, "oauth-refresh")
             raw_refresh, new_hash, _ = _new_secret()
             grant.prev_refresh_hash, grant.refresh_hash = grant.refresh_hash, new_hash
             grant.last_refreshed_at = utcnow()
             s.add(grant)
-            return _token_response(s, self.settings, grant, user, raw_refresh)
+            return _token_response(s, self.settings, grant, user, raw_refresh, dek=dek)
 
         return await self._db(go)
 
@@ -403,13 +408,14 @@ def _new_secret() -> tuple[str, str, str]:
 
 
 def _token_response(
-    s: Session, settings: Settings, grant: OAuthGrant, user: User, raw_refresh: str
+    s: Session, settings: Settings, grant: OAuthGrant, user: User, raw_refresh: str, dek: bytes | None = None
 ) -> OAuthToken:
     """Mint the access token as a normal ApiToken, replacing any earlier one for this grant."""
     for old in s.exec(
         select(ApiToken).where(ApiToken.grant_id == grant.id, col(ApiToken.revoked_at).is_(None))
     ).all():
         old.revoked_at = utcnow()
+        old.wrapped_dek = None  # a retired access token keeps no copy of the data key
         s.add(old)
     client = s.get(OAuthClient, grant.client_id)
     raw, digest, prefix = generate_api_token()
@@ -427,8 +433,11 @@ def _token_response(
             include_user_scope=grant.include_user_scope,
             expires_at=utcnow() + ttl,
             grant_id=grant.id,
+            wrapped_dek=crypto.wrap_for_secret(raw, dek, "token") if dek else None,
         )
     )
+    grant.wrapped_dek = crypto.wrap_for_secret(raw_refresh, dek, "oauth-refresh") if dek else None
+    s.add(grant)
     scopes = [sc for sc in grant.scopes if grant.access_level == "read_write" or sc != SCOPE_WRITE]
     return OAuthToken(
         access_token=raw,
@@ -443,11 +452,13 @@ def revoke_grant(s: Session, grant: OAuthGrant) -> None:
     now = utcnow()
     if grant.revoked_at is None:
         grant.revoked_at = now
-        s.add(grant)
-    for tok in s.exec(
-        select(ApiToken).where(ApiToken.grant_id == grant.id, col(ApiToken.revoked_at).is_(None))
-    ).all():
-        tok.revoked_at = now
+    grant.wrapped_dek = None  # revoking ends the app's ability to open encrypted memory, not just to ask
+    s.add(grant)
+    for tok in s.exec(select(ApiToken).where(ApiToken.grant_id == grant.id)).all():
+        # every token of the grant, including ones already retired by a refresh: none may keep a copy of the data key
+        if tok.revoked_at is None:
+            tok.revoked_at = now
+        tok.wrapped_dek = None
         s.add(tok)
 
 
@@ -456,7 +467,8 @@ def revoke_api_token(s: Session, tok: ApiToken) -> None:
     would quietly mint a replacement."""
     if tok.revoked_at is None:
         tok.revoked_at = utcnow()
-        s.add(tok)
+    tok.wrapped_dek = None  # and with it this token's copy of the data key
+    s.add(tok)
     if tok.grant_id and (grant := s.get(OAuthGrant, tok.grant_id)):
         revoke_grant(s, grant)
 
@@ -475,8 +487,10 @@ def approve(
     project_ids: list[str],
     include_user_scope: bool,
     access_level: str,
+    dek: bytes | None = None,
 ) -> str:
-    """Record the person's decision and return the one-time authorization code. Caller validates the choices."""
+    """Record the person's decision and return the one-time authorization code. Caller validates the choices.
+    `dek` is passed only when they chose to let this app open their encrypted memory (and their session is unlocked)."""
     raw = secrets.token_urlsafe(32)
     scopes = [sc for sc in req.scopes if access_level == "read_write" or sc != SCOPE_WRITE]
     s.add(
@@ -493,6 +507,7 @@ def approve(
             include_user_scope=include_user_scope,
             access_level=access_level,
             expires_at=utcnow() + CODE_TTL,
+            wrapped_dek=crypto.wrap_for_secret(raw, dek, "oauth-code") if dek else None,
         )
     )
     s.delete(req)

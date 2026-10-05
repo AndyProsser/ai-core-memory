@@ -19,6 +19,7 @@
     {% for p in projects %}<label class="indent"><input type="checkbox" name="projects" value="{{ p.id }}"> {{ p.slug }}</label>{% else %}<p class="hint indent">You have no projects yet.</p>{% endfor %}
     <label><input type="radio" name="scope_mode" value="all"> All my projects, including ones I create later</label>
     <label><input type="checkbox" name="user_scope" value="1"> My personal memory too <span class="hint">(things only about me — leave off unless you need it)</span></label>
+    {% if offer_encrypted %}<label class="indent"><input type="checkbox" name="include_encrypted" value="1"> …including what I keep encrypted <span class="hint">(this gives the app a copy of your key for as long as it stays connected; disconnecting destroys it)</span></label>{% endif %}
   </fieldset>
   <fieldset class="card"><legend>What may it do?</legend>
     <label><input type="radio" name="access" value="read_only" checked> Read only</label>

@@ -95,6 +95,9 @@ class ApiToken(SQLModel, table=True):
     # Set when this token was issued through OAuth (docs/SECURITY.md § MCP OAuth). Such tokens are managed as a
     # connected app, not as hand-made tokens, and revoking one ends the whole grant.
     grant_id: str | None = Field(default=None, index=True)
+    # The owner's data key wrapped under a key derived from THIS token's own secret (never stored), present only when
+    # the person chose to let the token read their encrypted private memory. Cleared when the token is revoked.
+    wrapped_dek: str | None = None
 
 
 class WebSession(SQLModel, table=True):
@@ -142,6 +145,9 @@ class MemoryRecord(SQLModel, table=True):
     last_retrieved: NaiveDatetime | None = None
     source: str = "dream-cycle"
     source_trust: str = "internal"  # internal | external (plugin/unattributed content)
+    # True: `body` is stored as ciphertext under its owner's key (docs/SECURITY.md § Encrypted private memory). The
+    # ORM layer (crypto_store) decrypts on load when the key is present and otherwise shows crypto.LOCKED.
+    encrypted: bool = Field(default=False, sa_column_kwargs={"server_default": "0"})
     created_at: NaiveDatetime = Field(default_factory=utcnow)
     updated_at: NaiveDatetime = Field(default_factory=utcnow)
 
@@ -177,6 +183,8 @@ class MemoryRevision(SQLModel, table=True):
     change_source: str = (
         "mcp-write"  # dream-cycle | mcp-write | import | ui | cli | plugin | mechanical | api
     )
+    encrypted: bool = Field(default=False, sa_column_kwargs={"server_default": "0"})  # body is ciphertext
+    key_user_id: str | None = None  # whose key seals it (the record owner), when encrypted
     flagged: bool = False  # called out for human attention (confirmed-record change, import conflict, ...)
     applied: bool = True  # False = a pending conflict awaiting a human decision
 
@@ -347,6 +355,9 @@ class OAuthCode(SQLModel, table=True):
     expires_at: NaiveDatetime
     used_at: NaiveDatetime | None = None
     grant_id: str | None = None  # set once exchanged, so a replayed code can revoke what it produced
+    wrapped_dek: str | None = (
+        None  # the data key wrapped under this code's secret (consent chose encrypted memory)
+    )
 
 
 class OAuthGrant(SQLModel, table=True):
@@ -367,6 +378,9 @@ class OAuthGrant(SQLModel, table=True):
     revoked_at: NaiveDatetime | None = None
     refresh_hash: str = Field(index=True, unique=True)  # current refresh token (hash)
     prev_refresh_hash: str | None = Field(default=None, index=True)  # the one just replaced: reuse => theft
+    wrapped_dek: str | None = (
+        None  # data key wrapped under the CURRENT refresh token's secret; re-wrapped on rotation
+    )
 
 
 class SearchIndexEntry(SQLModel, table=True):
@@ -378,3 +392,19 @@ class SearchIndexEntry(SQLModel, table=True):
     record_id: str = Field(primary_key=True)
     content_hash: str
     indexed_at: NaiveDatetime = Field(default_factory=utcnow)
+
+
+class UserKey(SQLModel, table=True):
+    """A person's encrypted-memory keys. Only wrapped forms are stored: the hub never keeps the passphrase, the recovery
+    key or the data key itself (docs/SECURITY.md § Encrypted private memory)."""
+
+    __tablename__ = "user_keys"
+    user_id: str = Field(foreign_key="users.id", primary_key=True)
+    kdf_salt: str
+    kdf_time: int
+    kdf_memory_kib: int
+    kdf_parallelism: int
+    wrapped_by_passphrase: str
+    wrapped_by_recovery: str
+    created_at: NaiveDatetime = Field(default_factory=utcnow)
+    passphrase_changed_at: NaiveDatetime = Field(default_factory=utcnow)

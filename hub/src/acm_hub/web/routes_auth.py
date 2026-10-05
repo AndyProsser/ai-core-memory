@@ -124,6 +124,7 @@ def login(
 
 @router.post("/logout")
 def logout(request: Request, ctx: Ctx = Depends(user_csrf)) -> RedirectResponse:
+    request.app.state.unlock_cache.drop(ctx.ws.id)  # signing out locks encrypted memory
     end_web_session(ctx.db, request.cookies.get(SESSION_COOKIE))
     resp = RedirectResponse("/login", status_code=303)
     resp.delete_cookie(SESSION_COOKIE, path="/")

@@ -12,6 +12,7 @@ from ..auth import mint_token, recently_authenticated
 from ..models import ApiToken, InstanceSettings, OAuthClient, Project, WebSession, utcnow
 from ..records import ValidationFailed
 from ..security import check_password_policy, hash_password, verify_password
+from . import routes_keys
 from .deps import Ctx, notice_url, render, require_user, user_csrf
 
 router = APIRouter()
@@ -47,6 +48,7 @@ def _settings_page(
         status=status,
         tokens=tokens,
         apps=apps,
+        enc=routes_keys.status(ctx.db, ctx),
         oauth_enabled=s.oauth_enabled,
         projects=sorted(projects, key=lambda p: p.slug),
         project_names=names,
@@ -108,6 +110,14 @@ async def create_token(request: Request, ctx: Ctx = Depends(user_csrf)):  # noqa
             return _settings_page(request, ctx, error="Enter your password to create a token.", status=403)
     elif not recently_authenticated(ctx.ws):
         return RedirectResponse("/auth/oidc/reauth", status_code=303)
+    want_encrypted = form.get("include_encrypted") == "on"
+    if want_encrypted and (ctx.dek is None or form.get("include_user_scope") != "on"):
+        return _settings_page(
+            request,
+            ctx,
+            error="Letting a token open your encrypted memory needs it unlocked in this session and personal memory included.",
+            status=422,
+        )
     chosen = [str(x) for x in form.getlist("projects")]
     allowed = readable_project_ids(ctx.db, ctx.principal)
     if any(c not in allowed for c in chosen):
@@ -121,6 +131,7 @@ async def create_token(request: Request, ctx: Ctx = Depends(user_csrf)):  # noqa
             access_level=str(form.get("access_level") or "read_only"),
             expires_days=int(str(form.get("expires_days") or "") or 0) or None,
             include_user_scope=form.get("include_user_scope") == "on",
+            dek=ctx.dek if want_encrypted else None,
         )
         ctx.db.commit()
     except (ValueError, ValidationFailed) as e:

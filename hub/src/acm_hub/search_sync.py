@@ -66,7 +66,9 @@ def _doc(session: Session, inst: PluginInstance, r: MemoryRecord) -> dict:
         "tier": r.tier,
         "confidence": r.confidence,
     }
-    if inst.egress == "full":  # text only on an explicit per-instance opt-in
+    if (
+        inst.egress == "full" and not r.encrypted
+    ):  # text only on an explicit opt-in, and never an encrypted body
         doc["body"] = r.body[:MAX_BODY]
     return doc
 

@@ -25,6 +25,64 @@
   <div class="actions"><button type="submit">Change password</button></div></form></div>
 {% else %}<p class="muted">You sign in with single sign-on, so there's no local password.</p>{% endif %}
 
+<h2>Encrypted private memory</h2>
+{% if not enc.enabled %}
+<p class="muted">Store the text of your <em>personal</em> memory encrypted, under a passphrase only you know. Anyone who gets a copy of the database or a backup — an operator, an admin — sees only ciphertext. Names, descriptions and topics stay readable so search and focus still work, so don't put secrets there. It does not protect against a compromised running hub, and nothing can recover your memory if you lose both the passphrase and the recovery key. <a href="https://github.com/AndyProsser/ai-core-memory/blob/main/docs/SECURITY.md">Details</a></p>
+<form method="post" action="/settings/memory-key/enable" class="card">
+  {{ csrf() }}
+  <div class="row">
+    <div><label for="mk1">Memory passphrase</label><input id="mk1" type="password" name="passphrase" autocomplete="new-password" minlength="12" required><p class="hint">At least 12 characters. Separate from your sign-in password.</p></div>
+    <div><label for="mk2">Confirm</label><input id="mk2" type="password" name="confirm" autocomplete="new-password" minlength="12" required></div>
+  </div>
+  <div class="actions"><button class="primary" type="submit">Encrypt my private memory</button></div>
+</form>
+{% else %}
+<p>{% if enc.unlocked %}<span class="badge established">unlocked</span> in this session.{% else %}<span class="badge stale">locked</span> {{ enc.locked_count }} private record(s) can't be read right now.{% endif %}
+  <span class="muted small">On since {{ enc.since|date }}.</span></p>
+{% if enc.unlocked %}
+<form method="post" action="/settings/memory-key/lock">{{ csrf() }}<button type="submit">Lock now</button></form>
+{% else %}
+<form method="post" action="/settings/memory-key/unlock" class="card">
+  {{ csrf() }}<label for="mku">Memory passphrase</label><input id="mku" type="password" name="passphrase" autocomplete="current-password" required>
+  <div class="actions"><button class="primary" type="submit">Unlock</button></div>
+</form>
+<details><summary>Forgot the passphrase? Use your recovery key</summary>
+  <form method="post" action="/settings/memory-key/recover" class="stack card">
+    {{ csrf() }}
+    <label for="mkr">Recovery key</label><input id="mkr" type="text" name="recovery_key" autocomplete="off" spellcheck="false" required>
+    <div class="row"><div><label for="mkr1">New passphrase</label><input id="mkr1" type="password" name="new" autocomplete="new-password" minlength="12" required></div>
+    <div><label for="mkr2">Confirm</label><input id="mkr2" type="password" name="confirm" autocomplete="new-password" minlength="12" required></div></div>
+    <div class="actions"><button type="submit">Recover</button></div>
+  </form>
+</details>
+{% endif %}
+<details><summary>Change passphrase</summary>
+  <form method="post" action="/settings/memory-key/change" class="stack card">
+    {{ csrf() }}
+    <label for="mkc0">Current passphrase</label><input id="mkc0" type="password" name="current" autocomplete="current-password" required>
+    <div class="row"><div><label for="mkc1">New passphrase</label><input id="mkc1" type="password" name="new" autocomplete="new-password" minlength="12" required></div>
+    <div><label for="mkc2">Confirm</label><input id="mkc2" type="password" name="confirm" autocomplete="new-password" minlength="12" required></div></div>
+    <div class="actions"><button type="submit">Change passphrase</button></div>
+  </form>
+</details>
+<details><summary>New recovery key</summary>
+  <form method="post" action="/settings/memory-key/recovery" class="stack card">
+    {{ csrf() }}<label for="mkn">Memory passphrase</label><input id="mkn" type="password" name="passphrase" autocomplete="current-password" required>
+    <p class="hint">Replaces your recovery key; the old one stops working.</p>
+    <div class="actions"><button type="submit">Make a new recovery key</button></div>
+  </form>
+</details>
+<details><summary>Turn encryption off</summary>
+  <form method="post" action="/settings/memory-key/disable" class="stack card">
+    {{ csrf() }}
+    <p class="hint">Decrypts all your private memory back to plain text on disk.</p>
+    <label for="mkd0">Memory passphrase</label><input id="mkd0" type="password" name="passphrase" autocomplete="current-password" required>
+    <label for="mkd1">Type “decrypt” to confirm</label><input id="mkd1" type="text" name="confirm" autocomplete="off" required>
+    <div class="actions"><button class="danger" type="submit">Decrypt and turn off</button></div>
+  </form>
+</details>
+{% endif %}
+
 {% if oauth_enabled %}
 <h2>Connected apps</h2>
 <p class="muted">Apps you signed in to this hub (for example Claude.ai). Each one has only the access you approved; disconnecting ends it immediately.</p>
@@ -74,6 +132,7 @@
   <select id="pj" name="projects" multiple size="{{ [projects|length + 1, 5]|min if projects else 2 }}" aria-describedby="pjh">{% for p in projects %}<option value="{{ p.id }}">{{ p.slug }}</option>{% endfor %}</select>
   <p class="hint" id="pjh">Select the projects this token may reach. Select none for all your projects.</p>
   <p><label class="inline"><input type="checkbox" name="include_user_scope"> Allow access to my personal (user-scope) memory</label></p>
+  {% if enc.enabled and enc.unlocked %}<p class="indent"><label class="inline"><input type="checkbox" name="include_encrypted"> …including what I keep encrypted <span class="hint">(gives this token a copy of your key, wrapped under its own secret; revoking the token destroys it)</span></label></p>{% endif %}
   {% if user.auth_provider == 'local' %}<label for="pw">Your password</label><input id="pw" type="password" name="password" autocomplete="current-password" required><p class="hint">Confirms it's you before a credential is minted.</p>{% endif %}
   <div class="actions"><button class="primary" type="submit">Create token</button></div>
 </form>

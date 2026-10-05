@@ -736,12 +736,14 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
       service), owner-only query-time fusion into `memory_focus` that can only ever add records the caller may read,
       and an example service (offline hashed vectors by default; Ollama / OpenAI-compatible backends tested against
       stand-ins, not real servers)
-- [ ] 6c — Encryption at rest for private (user-scope) record bodies
+- [x] 6c — Encryption at rest for private (user-scope) record bodies: opt-in per person, AES-256-GCM with a per-user
+      data key wrapped by a memory passphrase and a one-time recovery key; held in memory only while a web session is
+      unlocked; handed to API tokens / OAuth apps only by explicit choice at creation or consent; fail-closed writes;
+      excluded from FTS bodies, plugins, search sync, exports, consolidation and `acm compile`. Not end-to-end:
+      names/descriptions/topics stay plaintext and a compromised running hub sees plaintext (SECURITY.md)
 
 **Later / optional**
 
-- [ ] Optional embedding index as a plugin (never a core dependency)
-- [ ] Client-side encryption of `private`-scope bodies at rest (see SECURITY.md)
 - [ ] Reference implementation of the dream pipeline outside a single chat session
       (e.g. run against exported transcripts from multiple tools in one pass)
 - [ ] Postgres option for people who outgrow a single SQLite file

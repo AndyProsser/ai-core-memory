@@ -80,6 +80,10 @@ def last_activity(r: MemoryRecord) -> datetime:
 def _terms(r: MemoryRecord) -> frozenset[str]:
     # Content only. Names are just labels (two records about one fact are often named differently, and
     # near-identical template wording in names shouldn't count as similarity).
+    if r.encrypted:
+        return (
+            frozenset()
+        )  # encrypted records are never compared: without the key they're indistinguishable placeholders
     words = re.findall(r"[a-z0-9]{3,}", f"{r.description} {r.body}".lower())
     return frozenset(w for w in words if w not in _STOP)
 

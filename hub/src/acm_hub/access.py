@@ -31,6 +31,9 @@ class Principal:
     read_only: bool = False
     label: str | None = None  # OS username for CLI actors
     team_ids: set[str] = field(default_factory=set)
+    # The owner's data key for encrypted private memory, present only when this credential was unlocked or was granted it
+    # (docs/SECURITY.md § Encrypted private memory). Never shown in logs or reprs, never compared.
+    dek: bytes | None = field(default=None, repr=False, compare=False)
 
     @property
     def is_human(self) -> bool:

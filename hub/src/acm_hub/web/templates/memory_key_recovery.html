@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf with context %}
+{% from "_settings_nav.html" import settings_tabs with context %}
+{% block title %}Your recovery key{% endblock %}
+{% block content %}
+<header class="page"><div><h1>{{ 'Your new recovery key' if again else 'Encrypted private memory is on' }}</h1>
+  <p class="muted">{% if not again %}{{ records }} private record(s) were encrypted. {% endif %}This session is unlocked.</p></div></header>
+<div class="warning" role="alert">
+  <strong>Write this recovery key down now. It is shown once and is not stored anywhere.</strong>
+  If you forget your memory passphrase, this key is the only way back in — without both, your encrypted memory cannot be recovered by anyone.
+</div>
+<div class="card">
+  <div class="tokenbox mono spaced" id="rk">{{ recovery_key }}</div>
+  <button type="button" data-copy="rk">Copy key</button>
+  <p class="hint">Keep it somewhere separate from this hub (a password manager, or on paper). {% if again %}Your previous recovery key no longer works.{% endif %}</p>
+</div>
+<p><a class="btn primary" href="/settings">I've saved it — back to settings</a></p>
+{% endblock %}

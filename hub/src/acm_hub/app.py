@@ -18,7 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import text
 from sqlmodel import Session, select
 
-from . import __version__, dispatcher
+from . import __version__, dispatcher, keys
 from .auth import AuthError, authenticate_bearer, has_admin, issue_setup_code, purge_expired
 from .config import Settings, get_settings
 from .consolidate import maybe_run_consolidation
@@ -203,6 +203,8 @@ def create_app(settings: Settings | None = None, *, http_client_factory=None) ->
     remote_plugins.configure(settings)  # reads the operator's registration; contacts nothing yet
     app.state.token_limiter = SlidingWindowLimiter(settings.token_rate_limit_per_min)
     app.state.login_throttle = LoginThrottle()
+    app.state.unlock_cache = keys.UnlockCache()  # data keys of unlocked web sessions: server memory only
+    app.state.key_throttle = SlidingWindowLimiter(8, 600)  # passphrase attempts per person
     app.state.http_client_factory = http_client_factory or (
         lambda: httpx.AsyncClient(timeout=10.0, follow_redirects=False)
     )

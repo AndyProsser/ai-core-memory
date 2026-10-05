@@ -128,6 +128,12 @@ Offline-first and explicit:
 
 - **Account** — email, password (local accounts), linked SSO identity, **Theme**
   (System / Light / Dark).
+- **Encrypted private memory** — enable (passphrase + confirmation; the **recovery key** appears once on its own page,
+  never in a URL), unlock/lock this session, change passphrase, regenerate the recovery key, recover, and turn off
+  (needs the passphrase and typing "decrypt"). While your session is locked, a banner on every page says so and
+  private records show a locked placeholder. The token form and the OAuth consent screen each gain an "including what
+  I keep encrypted" checkbox, offered only when this session is unlocked and personal memory is included. See
+  [SECURITY.md](SECURITY.md#encrypted-private-memory-optional).
 - **API tokens** — create (label, project scope, read-only/read-write, expiry — default
   90 days), shown **once** in a copy box with a ready-to-paste `claude mcp add …` line
   and an `.mcp.json` snippet; list with prefix, scope, last used, expiry; **Revoke**

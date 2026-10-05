@@ -15,6 +15,7 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup
 from sqlmodel import Session, func, select
 
+from .. import crypto_store
 from ..access import AccessError, NotFound, Principal, principal_for_user
 from ..auth import SESSION_COOKIE, cookie_should_be_secure, csrf_ok, has_admin, lookup_web_session
 from ..models import InboxItem, InstanceSettings, User, WebSession
@@ -63,6 +64,7 @@ class Ctx:
     ws: WebSession
     principal: Principal
     request: Request
+    dek: bytes | None = None  # the data key for encrypted private memory, if this session is unlocked
 
 
 def _client_host(request: Request) -> str | None:
@@ -78,7 +80,12 @@ def require_user(request: Request, db: Session = Depends(get_db)) -> Ctx:
         nxt = request.url.path if request.method == "GET" and request.url.path != "/" else ""
         raise RedirectTo("/login" + (f"?next={quote(nxt)}" if nxt else ""))
     user, ws = found
-    return Ctx(db, user, ws, principal_for_user(db, user, kind="session"), request)
+    principal = principal_for_user(db, user, kind="session")
+    principal.dek = request.app.state.unlock_cache.get(
+        ws.id, user.id
+    )  # None unless they unlocked this session
+    crypto_store.attach_keys(db, user.id, principal.dek)
+    return Ctx(db, user, ws, principal, request, principal.dek)
 
 
 async def user_csrf(request: Request, ctx: Ctx = Depends(require_user)) -> Ctx:
@@ -130,9 +137,16 @@ def render(request: Request, name: str, ctx: Ctx | None = None, *, status: int =
             ).one(),
             "proposal_count": pending_count(ctx.db, ctx.principal),
             "deployment_mode": inst.deployment_mode if inst else "solo",
+            "locked_notice": bool(ctx.user.id) and ctx.dek is None and _has_private_keys(ctx.db, ctx.user.id),
         }
     base.update(kw)
     return templates.TemplateResponse(request, name, base, status_code=status)
+
+
+def _has_private_keys(db: Session, user_id: str) -> bool:
+    from ..keys import is_enabled
+
+    return is_enabled(db, user_id)
 
 
 def notice_url(path: str, message: str) -> str:

@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from sqlmodel import Session, col, select
 
+from . import crypto
 from .access import Principal, principal_for_user
 from .config import Settings
 from .models import ApiToken, InstanceSettings, User, WebSession, utcnow
@@ -101,6 +102,8 @@ def authenticate_bearer(
     p.token_project_ids = list(tok.project_ids or [])
     p.token_include_user_scope = tok.include_user_scope
     p.read_only = tok.access_level != "read_write"
+    # Only a token the person explicitly allowed carries a copy of their data key, wrapped under this token's own secret.
+    p.dek = crypto.unwrap_from_secret(raw, tok.wrapped_dek, "token")
     return p
 
 
@@ -113,6 +116,7 @@ def mint_token(
     access_level: str,
     expires_days: int | None,
     include_user_scope: bool,
+    dek: bytes | None = None,
 ) -> tuple[str, ApiToken]:
     from .security import generate_api_token
 
@@ -136,6 +140,7 @@ def mint_token(
         access_level=access_level,
         include_user_scope=include_user_scope,
         expires_at=utcnow() + timedelta(days=days),
+        wrapped_dek=crypto.wrap_for_secret(raw, dek, "token") if dek else None,
     )
     session.add(tok)
     session.flush()

@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 import yaml
 from sqlmodel import Session, col, select
 
-from . import __version__, events, proposals
+from . import __version__, crypto, crypto_store, events, proposals
 from .access import AccessError, NotFound, Principal, can_read, visible_clause
 from .ids import is_id
 from .models import (
@@ -171,6 +171,10 @@ def export_files(
         .order_by(col(MemoryRecord.scope), col(MemoryRecord.name))
     )
     recs = list(session.exec(stmt).all())
+    # Encrypted records this credential can't open are skipped, never exported as the placeholder (which an import could
+    # then write back over the real text). The manifest says how many were left out.
+    skipped_locked = sum(1 for r in recs if crypto_store.is_locked(r))
+    recs = [r for r in recs if not crypto_store.is_locked(r)]
     if scope:
         recs = [r for r in recs if r.scope == scope]
     if project:
@@ -208,7 +212,7 @@ def export_files(
                         "applied": v.applied,
                         "name": v.name,
                         "description": v.description,
-                        "body": v.body,
+                        "body": "" if v.body == crypto.LOCKED else v.body,
                         "confidence": v.confidence,
                         "tier": v.tier,
                         "status": v.status,
@@ -245,7 +249,7 @@ def export_files(
         "hub_version": __version__,
         "instance_id": inst.instance_id if inst else None,
         "exported_by": p.email or p.user_id,
-        "counts": {"records": len(recs), "inbox": n_inbox},
+        "counts": {"records": len(recs), "inbox": n_inbox, "skipped_locked": skipped_locked},
         "filters": {"scope": scope, "project": project},
         "files": {path: hashlib.sha256(b).hexdigest() for path, b in sorted(files.items())},
     }

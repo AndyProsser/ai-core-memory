@@ -115,7 +115,8 @@ def _present(session: Session, inst: PluginInstance, ev: Event) -> PluginEvent:
                 owner_user_id=rec.user_id,
             ):
                 payload["description"] = rec.description
-                payload["body"] = rec.body[:4000]
+                if not rec.encrypted:  # an encrypted body is never sent to a plugin, even at egress=full
+                    payload["body"] = rec.body[:4000]
     return PluginEvent(
         id=ev.id,
         type=ev.type,

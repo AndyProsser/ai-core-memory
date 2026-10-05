@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
+from .. import crypto_store
 from ..access import Principal, principal_for_user, require_read
 from ..auth import SESSION_COOKIE, csrf_ok, lookup_web_session
 from ..focus import build_focus
@@ -42,7 +43,10 @@ def api_user(request: Request, db: Session = Depends(get_db)) -> Ctx:
     if found is None:
         raise HTTPException(401, "Not signed in.")
     user, ws = found
-    return Ctx(db, user, ws, principal_for_user(db, user, kind="session"), request)
+    principal = principal_for_user(db, user, kind="session")
+    principal.dek = request.app.state.unlock_cache.get(ws.id, user.id)
+    crypto_store.attach_keys(db, user.id, principal.dek)
+    return Ctx(db, user, ws, principal, request, principal.dek)
 
 
 def api_write(request: Request, ctx: Ctx = Depends(api_user)) -> Ctx:

@@ -409,6 +409,63 @@ _Limits:_ a service that you point at `egress: full` still receives that text �
 plugin, not the data you chose to send it. A service can lie about its own results (a feed reader can invent items);
 that is why they land in the inbox as untrusted input.
 
+## Encrypted private memory (optional)
+
+A person can turn on encryption for their own **private (user-scope) memory**. The body of each of their user-scope
+records, and of every revision of those records, is then stored as AES-256-GCM ciphertext, under a key only they can
+unlock. This is **encryption at rest with a key the hub does not keep**, not end-to-end encryption: while a request is
+being served with an unlocked credential, the running hub holds the plaintext.
+
+**What it protects against**
+
+- Someone who obtains the database file or a backup of it — including an admin or operator who can read the SQLite
+  file but has no passphrase. Roles never gave an admin access to private memory; this makes the storage agree.
+- Leaks through the hub's own side doors: the full-text index, plugin events, search-plugin indexing, exports,
+  consolidation and `acm compile` never receive an encrypted record's body unless the person unlocked it themselves.
+
+**What it does not protect against** (stated plainly)
+
+- A compromised or malicious *running* hub, or anyone who can read its process memory or change its code: they can
+  see plaintext whenever a credential is unlocked. Treat the host as trusted while you are using it.
+- The fields that stay in plaintext so that listing, search and focus keep working: a record's **name, description and
+  topics**, its type/tier/confidence/status, timestamps and links. Don't put secrets there.
+- Inbox items (transient captures, plaintext until they are turned into records, which are then encrypted) and every
+  non-private scope. Project and team memory are not encrypted by this feature.
+- Losing both the passphrase and the recovery key. There is no back door; the data is unrecoverable by design.
+
+**Keys.** Enabling generates a random 256-bit data key (DEK). The DEK is stored only *wrapped*: once under a key derived
+from the person's **memory passphrase** with Argon2id (a separate secret from their login password, so SSO users have
+one too) and once under a random **recovery key** shown a single time. Records are sealed with the DEK, with the record
+(or revision) id bound in as associated data, so ciphertext can't be moved between rows. The hub never stores the
+passphrase, the recovery key or the DEK.
+
+**Unlocking is explicit and scoped.**
+
+| Credential | How it gets the DEK |
+| --- | --- |
+| Web session | The person enters the passphrase; the DEK is held **in server memory only**, tied to that session, and dropped on logout, session expiry, deactivation, a restart, or 30 idle minutes. |
+| API token / OAuth app | Only if the person ticks "can read my encrypted memory" **when creating the token or approving the app** (while unlocked). The DEK is wrapped under a key derived from the token's own secret, so the database alone can't unwrap it; revoking the token or grant destroys the wrap. |
+| `acm` CLI | The passphrase, prompted for (or supplied by `ACM_PASSPHRASE`), for that command only. |
+| Everything else — plugins, the scheduler, consolidation, search sync | Never. They see a locked placeholder. |
+
+**Locked means locked, everywhere, and fails closed.** A record whose key isn't available reads as a fixed placeholder
+(`🔒 …`), never ciphertext. Writing to private memory with a credential that can't encrypt is **refused** — it never
+silently falls back to plaintext. A body equal to the placeholder can never be written (so an export, merge or
+promotion can't copy "locked" over real content). Exports skip locked records and say so. Locked records are left out
+of duplicate detection and plugin payloads.
+
+**Plaintext written earlier.** Switching encryption on seals existing records and then rewrites the database file
+(WAL checkpoint + `VACUUM`) so the old plaintext doesn't linger in freed pages. That covers the live file only: backups
+and copies made *before* enabling still contain the plaintext, and promoting a private record to project or team scope
+writes its body in plaintext by design (it is no longer private).
+
+**Operations** (web: Settings → Account; CLI: `acm key …`): enable (shows the recovery key once), unlock/lock, change
+passphrase, regenerate the recovery key, recover with the recovery key, and disable (decrypts everything back to plaintext).
+
+**Not built:** rotating the DEK itself (changing the passphrase or recovery key re-wraps it without re-encrypting
+records), encrypting team/project memory, names/descriptions or inbox items, and sharing one key cache across several
+hub processes (the hub is single-process).
+
 ## Proposals: AI suggestions, human decisions
 
 The proposal queue (see [ARCHITECTURE.md](ARCHITECTURE.md#who-does-the-reasoning-the-proposal-queue))
@@ -447,7 +504,8 @@ What is built, and the limits of it, stated plainly:
   recovers with `acm user set-password` on the host. OIDC users recover through their IdP.
 - The consolidation scheduler runs in the hub process; if you run several hub processes against one
   database (not supported with SQLite), each would schedule its own pass.
-- Records and the database are not encrypted at rest (see Roles above for the
-  roadmap idea). The DB file and its directory are created `0600`/`0700`.
+- Records are stored in plaintext unless a person opts into
+  [encrypted private memory](#encrypted-private-memory-optional), which covers only their user-scope bodies. The DB
+  file and its directory are created `0600`/`0700`.
 - Tokens and sessions are looked up by the SHA-256 of a 256-bit random value; there's no
   per-secret salt because there's nothing low-entropy to protect. Passwords use Argon2id.

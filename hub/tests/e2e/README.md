@@ -11,9 +11,12 @@ pip install playwright && playwright install chromium     # or use an existing C
 # start a throwaway hub (see docs/DEPLOYMENT.md), create an admin, then:
 ACM_E2E_URL=http://127.0.0.1:8000 ACM_E2E_EMAIL=you@example.com ACM_E2E_PASSWORD=... python tests/e2e/browser_smoke.py
 ACM_E2E_URL=... ACM_E2E_EMAIL=... ACM_E2E_PASSWORD=... python tests/e2e/oauth_flow.py   # needs MEMORY_HUB_OAUTH_ENABLED=true on the hub
+ACM_E2E_URL=... ACM_E2E_EMAIL=... ACM_E2E_PASSWORD=... python tests/e2e/encrypted_memory.py   # optional ACM_E2E_SHOTS=<dir> saves screenshots
 ```
 
 - `browser_smoke.py` signs in and submits the main forms (record, project, user, token mint/revoke, theme), failing on any 403.
 - `oauth_flow.py` plays an OAuth client on a loopback port: registers, sends the browser through sign-in and the consent
   screen, follows the approval redirect (which proves the page's CSP lets it through), exchanges the code, calls MCP,
   rotates the refresh token, and checks that replaying the old one ends the grant. Use a throwaway hub.
+- `encrypted_memory.py` enables encrypted private memory from Settings, checks the recovery key appears once, that locking,
+  a wrong passphrase and the right one behave as described, and fails on any 403/422/500. Use a throwaway hub.
