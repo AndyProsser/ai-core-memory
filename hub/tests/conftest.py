@@ -102,3 +102,9 @@ def authed(hub):
     page = client.get("/memory")
     assert page.status_code == 200
     return client, app, csrf_of(page.text)
+
+
+from .remote_support import (  # noqa: E402, F401 — fixtures shared by the remote/search plugin tests
+    _clean,
+    start,
+)

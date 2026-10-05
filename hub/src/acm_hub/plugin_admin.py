@@ -186,4 +186,5 @@ def default_instance(user: User, plugin: BasePlugin) -> PluginInstance:
         scopes=[],
         config={},
         secret_refs={},
+        pull_interval_minutes=15 if plugin.info.kind == "search" else 60,
     )

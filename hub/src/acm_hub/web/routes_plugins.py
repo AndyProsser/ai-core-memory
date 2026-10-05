@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import col, select
 
-from .. import dispatcher
+from .. import dispatcher, search_sync
 from .. import plugin_admin as pa
 from ..access import AccessError, NotFound
 from ..models import Event, PluginDelivery, PluginInstance, Project
@@ -96,6 +96,10 @@ def _form_ctx(ctx: Ctx, plugin, inst: PluginInstance, values: dict | None = None
         "all_events": SINK_EVENTS,
         "is_sink": plugin.info.kind in {"sink", "both"},
         "is_source": plugin.info.kind in {"source", "both"},
+        "is_search": plugin.info.kind == "search",
+        "indexed": search_sync.indexed_count(ctx.db, inst.id)
+        if plugin.info.kind == "search" and inst.id
+        else 0,
         "projects": sorted(p.slug for p in ctx.db.exec(select(Project)).all()),
     }
 
@@ -245,10 +249,31 @@ def plugin_pull(iid: str, ctx: Ctx = Depends(user_csrf)) -> RedirectResponse:
     return RedirectResponse(notice_url(f"/plugins/{iid}", msg), status_code=303)
 
 
+@router.post("/plugins/{iid}/rebuild")
+def plugin_rebuild(iid: str, ctx: Ctx = Depends(user_csrf)) -> RedirectResponse:
+    _admin(ctx)
+    inst = _get(ctx, iid)
+    if not inst.enabled:
+        return RedirectResponse(notice_url(f"/plugins/{iid}", "Turn the plugin on first."), status_code=303)
+    res = search_sync.run_sync(ctx.db.get_bind(), iid, rebuild=True)
+    ctx.db.expire_all()
+    msg = (
+        f"Rebuild failed: {res.error}"
+        if res.error
+        else f"Rebuilt. {res.indexed} record(s) sent"
+        + (f"; {res.remaining} more will follow." if res.remaining else ".")
+    )
+    return RedirectResponse(notice_url(f"/plugins/{iid}", msg), status_code=303)
+
+
 @router.post("/plugins/{iid}/delete")
 def plugin_delete(iid: str, ctx: Ctx = Depends(user_csrf)) -> RedirectResponse:
     _admin(ctx)
     inst = _get(ctx, iid)
+    search_sync.wipe(
+        ctx.db.get_bind(), iid
+    )  # a search instance's index is forgotten (best effort at the service)
+    ctx.db.expire_all()
     for d in ctx.db.exec(select(PluginDelivery).where(PluginDelivery.instance_id == iid)).all():
         ctx.db.delete(d)
     ctx.db.delete(inst)

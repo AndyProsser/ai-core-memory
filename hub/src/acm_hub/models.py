@@ -367,3 +367,14 @@ class OAuthGrant(SQLModel, table=True):
     revoked_at: NaiveDatetime | None = None
     refresh_hash: str = Field(index=True, unique=True)  # current refresh token (hash)
     prev_refresh_hash: str | None = Field(default=None, index=True)  # the one just replaced: reuse => theft
+
+
+class SearchIndexEntry(SQLModel, table=True):
+    """What the hub last sent to a search plugin instance, as a hash: syncs send only differences, and removals are exact
+    (docs/PLUGINS.md § Search plugins). The index itself lives in the plugin service, never here."""
+
+    __tablename__ = "search_index_entries"
+    instance_id: str = Field(foreign_key="plugin_instances.id", primary_key=True)
+    record_id: str = Field(primary_key=True)
+    content_hash: str
+    indexed_at: NaiveDatetime = Field(default_factory=utcnow)

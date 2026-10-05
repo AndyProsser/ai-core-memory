@@ -105,8 +105,19 @@ def build_focus(
     core_budget: int = 2000,
     include_other_projects: bool = False,
     touch: bool = False,
+    use_semantic: bool = False,
 ) -> FocusPack:
     pack = FocusPack(task=task, budget=budget, core_budget=core_budget)
+    semantic: dict[str, tuple[int, str]] = {}
+    if use_semantic:
+        # Optional second opinion from the caller's own search plugins (docs/PLUGINS.md § Search plugins). Only ids
+        # come back; they join the candidate set below ONLY if they are in `pool` — visible to the caller, active,
+        # associated, in scope for the project — so a search service can't surface what the caller couldn't read.
+        from .search_sync import semantic_candidates
+
+        ranked, notes = semantic_candidates(session, p, task)
+        semantic = {rid: (rank, label) for rid, rank, label in ranked}
+        pack.notes.extend(notes)
     visible = visible_clause(session, p)
     active = MemoryRecord.status == "active"
     proj = session.exec(select(Project).where(Project.slug == project)).first() if project else None
@@ -153,6 +164,12 @@ def build_focus(
         if rid in ranked_text:
             base += ranked_text[rid]
             why.append("matched the task text")
+        if rid in semantic:
+            rank, label = semantic[rid]
+            base += 0.7 / (
+                1 + 0.2 * rank
+            )  # reciprocal-rank style: the best hit counts for most, and it decays
+            why.append(f"semantic match ({label})")
         rec_topics = set(r.topics)
         topic_hit = (rec_topics & wanted_topics) or (rec_topics & task_terms)
         if topic_hit:

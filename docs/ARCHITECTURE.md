@@ -731,7 +731,11 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
 - [x] 6a — Remote (out-of-process) plugins: signed JSON protocol, operator-registered services, mutual HMAC
       authentication, strict validation of everything a service returns, an RSS/Atom example service, Memos digest
       export
-- [ ] 6b — Optional embedding index, as a plugin (never a core dependency)
+- [x] 6b — Optional embedding index as a plugin (never a core dependency): a `search` plugin kind, hub-driven
+      hash-based reconciliation (so records edited out of an allowlist, archived or deleted are removed from the
+      service), owner-only query-time fusion into `memory_focus` that can only ever add records the caller may read,
+      and an example service (offline hashed vectors by default; Ollama / OpenAI-compatible backends tested against
+      stand-ins, not real servers)
 - [ ] 6c — Encryption at rest for private (user-scope) record bodies
 
 **Later / optional**

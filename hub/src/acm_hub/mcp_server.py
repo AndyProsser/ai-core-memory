@@ -139,6 +139,7 @@ async def memory_focus(
             core_budget=core_budget,
             include_other_projects=include_other_projects,
             touch=True,
+            use_semantic=True,
         )
         return pack.to_dict()
 

@@ -390,6 +390,21 @@ hub calls over HTTP, so a hostile or buggy one has no way into the hub's process
 - **No credentials in the hub.** The service's own third-party credentials live in its environment, never in the hub's.
 - **Same egress rules.** The URL must be https or a local/private address, redirects are never followed.
 
+**Search plugins** (an optional embedding index; see [PLUGINS.md § Search plugins](PLUGINS.md#search-plugins-an-optional-embedding-index))
+add two properties on top of the above, each with a test that fails if it is removed:
+
+- **A service can add nothing the caller couldn't already read.** It returns ids; the focus builder only admits an id
+  that is in the caller's own visible, active, associated, project-scoped candidate pool. An id belonging to another
+  person's private memory, an archived record, a record in another project, or one that doesn't exist is dropped.
+- **An index serves only its owner.** A search instance is queried only by the person who owns it, so one person's
+  index never answers another's `memory_focus`, even in a project they share.
+- **What it holds is what the allowlist permits, kept current.** Reconciliation sends each instance only the active
+  records it may see (user-scope only with the acknowledgement, and only the owner's own) and removes anything that is
+  edited out of scope, archived, superseded or deleted — and everything when the instance is deleted. At `metadata`
+  egress the service gets a record's name, description and topics, never its body.
+- **It can never hurt retrieval.** Calls have a 2-second budget; a down, slow, unsigned or malformed service costs a
+  note in the pack and nothing else — the plain full-text result is unchanged.
+
 _Limits:_ a service that you point at `egress: full` still receives that text — isolation protects the hub from the
 plugin, not the data you chose to send it. A service can lie about its own results (a feed reader can invent items);
 that is why they land in the inbox as untrusted input.

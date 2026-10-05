@@ -38,8 +38,8 @@
     <p class="hint">{{ s.help }} {% if s.env %}{% if s.is_set %}<span class="badge established">set in the hub's environment</span>{% else %}<span class="badge stale">not set in the hub's environment</span>{% endif %}{% endif %}</p>
   {% endfor %}{% endif %}
 
-  {% if is_sink %}<h3>What it may see</h3>
-  <p class="hint">Nothing is shared unless you tick it. Notifications carry names, types and a link back here — not the text of a memory — unless you choose “full text”.</p>
+  {% if is_sink or is_search %}<h3>What it may see</h3>
+  <p class="hint">Nothing is shared unless you tick it. {% if is_search %}It is sent each allowed memory's name, description and topics — and the full text only if you choose “full text”.{% else %}Notifications carry names, types and a link back here — not the text of a memory — unless you choose “full text”.{% endif %}</p>
   <div><span class="small"><strong>Scopes</strong></span>
     {% for s, l in [('project', 'Project memory'), ('team', 'Team memory'), ('user', 'My personal memory')] %}
     <label class="inline spaced"><input type="checkbox" name="scopes" value="{{ s }}" {% if s in inst.scopes %}checked{% endif %}> {{ l }}</label>&nbsp;{% endfor %}
@@ -48,12 +48,16 @@
   <div class="row">
     <div><label for="projects">Only these projects <span class="muted">(optional)</span></label><input id="projects" type="text" name="projects" value="{{ inst.projects|join(', ') }}" placeholder="{{ projects|join(', ') if projects else 'project-slug' }}">
       <p class="hint">Empty means every project within the allowed scopes that you can read.</p></div>
-    <div><label for="egress">Detail</label><select id="egress" name="egress"><option value="metadata" {% if inst.egress == 'metadata' %}selected{% endif %}>Titles and links only (recommended)</option><option value="full" {% if inst.egress == 'full' %}selected{% endif %}>Full text of memories</option></select></div>
+    <div><label for="egress">Detail</label><select id="egress" name="egress"><option value="metadata" {% if inst.egress == 'metadata' %}selected{% endif %}>{{ 'Names, descriptions and topics only (recommended)' if is_search else 'Titles and links only (recommended)' }}</option><option value="full" {% if inst.egress == 'full' %}selected{% endif %}>Full text of memories</option></select></div>
   </div>
-  <span class="small"><strong>Notify me when…</strong></span>
-  <div>{% for e in all_events %}<label class="inline spaced"><input type="checkbox" name="events" value="{{ e }}" {% if e in inst.events %}checked{% endif %}> {{ labels[e] }}</label><br>{% endfor %}</div>
+  {% if is_sink %}<span class="small"><strong>Notify me when…</strong></span>
+  <div>{% for e in all_events %}<label class="inline spaced"><input type="checkbox" name="events" value="{{ e }}" {% if e in inst.events %}checked{% endif %}> {{ labels[e] }}</label><br>{% endfor %}</div>{% endif %}
   {% endif %}
 
+  {% if is_search %}<h3>Schedule</h3>
+  <div class="row"><div><label for="pull_interval_minutes">Sync every (minutes)</label><input id="pull_interval_minutes" type="number" name="pull_interval_minutes" value="{{ inst.pull_interval_minutes }}" min="5" max="10080"></div></div>
+  <p class="hint">The hub sends only what changed, and removes anything that is edited out of this allowlist, archived or deleted. The index only ever answers searches made by you.</p>
+  {% endif %}
   {% if is_source %}<h3>Schedule</h3>
   <div class="row"><div><label for="pull_interval_minutes">Check every (minutes)</label><input id="pull_interval_minutes" type="number" name="pull_interval_minutes" value="{{ inst.pull_interval_minutes }}" min="5" max="10080"></div></div>
   <p class="hint">Captured notes go to your inbox for review. They're marked as coming from outside, and are never turned into memory automatically.</p>
@@ -66,6 +70,7 @@
 <h2>Actions</h2>
 <div class="actions">
   {% if is_sink %}<form method="post" action="/plugins/{{ inst.id }}/test">{{ csrf() }}<button type="submit">Send a test notification</button></form>{% endif %}
+  {% if is_search %}<form method="post" action="/plugins/{{ inst.id }}/rebuild">{{ csrf() }}<button type="submit">Rebuild index</button></form> <span class="muted small">{{ indexed }} record(s) indexed</span>{% endif %}
   {% if is_source %}<form method="post" action="/plugins/{{ inst.id }}/pull">{{ csrf() }}<button type="submit">Check now</button></form>{% endif %}
   <form method="post" action="/plugins/{{ inst.id }}/delete" >{{ csrf() }}<button class="danger" type="submit">Remove</button></form>
 </div>

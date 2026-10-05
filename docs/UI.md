@@ -156,6 +156,10 @@ deployment mode allow.
   indicator, never the value), the scope and project allowlist, detail level, event checkboxes, and for
   sources a pull interval. **Send a test notification**, **Check now**, recent deliveries with errors, and
   **Remove**. Admin only. See [PLUGINS.md](PLUGINS.md).
+- **Search plugins** — a plugin that adds semantic search shows as "adds semantic search" in the Plugins list. Its form has
+  the usual allowlist and detail level but no notification events, and a sync interval; its page has **Rebuild index**
+  (sends everything now, and says how many records are indexed). Focus preview shows `semantic match (<instance>)` as a
+  reason when the plugin found something.
 - **Instance** _(admin)_ — deployment mode, auth providers (local / OIDC: issuer, client
   ID, secret ref), core token budget, staleness windows, proposal auto-apply policy.
 

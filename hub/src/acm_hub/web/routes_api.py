@@ -205,6 +205,7 @@ def focus(
         core_budget=inst.core_token_budget,
         include_other_projects=include_other_projects,
         touch=False,  # looking at a preview isn't a session being served
+        use_semantic=True,  # the preview shows what an assistant would be handed, semantic hits included
     )
     return pack.to_dict()
 

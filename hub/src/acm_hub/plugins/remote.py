@@ -30,15 +30,17 @@ FIELD_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
 MAX_RESPONSE_BYTES = 1_000_000
 MAX_ITEMS = 200
+MAX_SEARCH_RESULTS = 50
 MAX_FIELDS = 30
 REFRESH_EVERY = 900.0  # seconds between manifest refreshes of a healthy service
 RETRY_MIN, RETRY_MAX = 30.0, 600.0
 
 
 class RemoteError(Exception):
-    def __init__(self, message: str, *, retry: bool = True):
+    def __init__(self, message: str, *, retry: bool = True, status: int | None = None):
         super().__init__(message)
         self.retry = retry
+        self.status = status  # the service's HTTP status, when it answered at all
 
 
 # --- registration (operator-controlled) ------------------------------------------------------------------------------
@@ -125,7 +127,7 @@ class Manifest(BaseModel):
     key: str
     name: str = Field(min_length=1, max_length=80)
     description: str = Field(default="", max_length=500)
-    kind: Literal["source", "sink", "both"]
+    kind: Literal["source", "sink", "both", "search"]
     config: list[ManifestField] = Field(default_factory=list, max_length=MAX_FIELDS)
     default_events: list[str] = Field(default_factory=list, max_length=len(EVENT_TYPES))
 
@@ -170,7 +172,9 @@ class RemoteClient:
         self.secret = secret
         self.http = EgressClient([urlsplit(spec.url).hostname or ""])
 
-    def call(self, op: str, payload: dict | None = None, *, method: str = "POST") -> dict:
+    def call(
+        self, op: str, payload: dict | None = None, *, method: str = "POST", timeout: float | None = None
+    ) -> dict:
         body = (
             b""
             if method == "GET"
@@ -186,7 +190,7 @@ class RemoteClient:
         }
         url = self.spec.url.rstrip("/") + PREFIX + op
         try:
-            r = self.http.request(method, url, content=body, headers=headers)
+            r = self.http.request(method, url, content=body, headers=headers, timeout=timeout)
         except EgressError as e:
             raise RemoteError(str(e), retry=False) from e
         except Exception as e:  # noqa: BLE001 — connection refused, timeout, TLS: the service is down, try again later
@@ -205,7 +209,11 @@ class RemoteClient:
         if r.status_code == 429 or r.status_code >= 500:
             raise RemoteError(f"the service returned HTTP {r.status_code}")
         if r.status_code >= 400:
-            raise RemoteError(f"the service rejected the request with HTTP {r.status_code}", retry=False)
+            raise RemoteError(
+                f"the service rejected the request with HTTP {r.status_code}",
+                retry=False,
+                status=r.status_code,
+            )
         try:
             data = json.loads(r.content or b"{}")
         except ValueError as e:
@@ -233,6 +241,15 @@ class _Item(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     body: str = Field(default="", max_length=100_000)
     external_ref: str | None = Field(default=None, max_length=500)
+
+
+class _SearchHit(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    score: float = Field(ge=0.0, le=1e6)
+
+
+class _Search(BaseModel):
+    results: list[_SearchHit] = Field(default_factory=list, max_length=MAX_SEARCH_RESULTS)
 
 
 class _Pull(BaseModel):
@@ -276,6 +293,8 @@ class RemotePlugin(BasePlugin):
                 _Validate, self.client.call("validate", {"instance": {}, "config": config.model_dump()})
             )
         except RemoteError as e:
+            if e.status == 404:
+                return  # `validate` is optional: a service that doesn't implement it has no extra checks to make
             raise ValueError(f"couldn't check the settings with the service: {e}") from e
         if not out.ok:
             raise ValueError(out.error or "the service rejected these settings")
@@ -316,6 +335,27 @@ class RemotePlugin(BasePlugin):
         for item in out.items[:MAX_ITEMS]:
             ctx.inbox.add(item.title, item.body, external_ref=item.external_ref)  # type: ignore[union-attr]
 
+    # -- search plugins ------------------------------------------------------------------------------------------
+
+    def _checked_ok(self, op: str, payload: dict) -> None:
+        out = _parse(_Ok, self.client.call(op, payload))
+        if not out.ok:
+            raise RemoteError(out.message or f"the service couldn't {op}", retry=False)
+
+    def index(self, ctx: PluginContext, records: list[dict[str, Any]]) -> None:
+        self._checked_ok("index", {"instance": self._instance(ctx), "records": records})
+
+    def remove(self, ctx: PluginContext, ids: list[str]) -> None:
+        self._checked_ok("remove", {"instance": self._instance(ctx), "ids": ids})
+
+    def reset(self, ctx: PluginContext) -> None:
+        self._checked_ok("reset", {"instance": self._instance(ctx)})
+
+    def search(self, ctx: PluginContext, query: str, limit: int, timeout: float) -> list[tuple[str, float]]:
+        payload = {"instance": self._instance(ctx), "query": query, "limit": min(limit, MAX_SEARCH_RESULTS)}
+        out = _parse(_Search, self.client.call("search", payload, timeout=timeout))
+        return [(h.id, h.score) for h in out.results]
+
     def export_digest(self, ctx: PluginContext, digest: dict[str, Any]) -> None:
         payload = {"instance": self._instance(ctx), "config": ctx.config.model_dump(), "digest": digest}
         out = _parse(_Ok, self.client.call("digest", payload))
@@ -333,6 +373,7 @@ class RemoteState:
     error: str | None = "not contacted yet"
     next_try: float = 0.0
     failures: int = 0
+    kind: str | None = None  # the last manifest's kind, kept while the service is down
 
 
 STATE: dict[str, RemoteState] = {}
@@ -362,6 +403,11 @@ def configure(settings: Any) -> None:
 
 def is_remote_key(key: str) -> bool:
     return key in STATE
+
+
+def known_kind(key: str) -> str | None:
+    st = STATE.get(key)
+    return st.kind if st else None
 
 
 def unavailable_reason(key: str) -> str | None:
@@ -405,7 +451,7 @@ def refresh_one(key: str, *, now: float | None = None) -> None:
         _fail(st, f"its manifest is invalid ({str(e).splitlines()[0][:120]})", now)
         return
     registry.register(plugin)
-    st.plugin, st.error, st.failures = plugin, None, 0
+    st.plugin, st.error, st.failures, st.kind = plugin, None, 0, manifest.kind
     st.next_try = now + REFRESH_EVERY
 
 

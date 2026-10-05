@@ -540,4 +540,7 @@ def run_scheduled(engine: Engine, now: datetime | None = None) -> dict:
     stats = dispatch_once(engine, now=now)
     pulls = [run_pull(engine, i) for i in pulls_due(engine, now)]
     digests = [send_digest(engine, i, now) for i in digests_due(engine, now)]
-    return {"dispatch": stats, "pulls": pulls, "digests": sum(digests)}
+    from . import search_sync  # late: search_sync uses this module's call/timeout helpers
+
+    syncs = [search_sync.run_sync(engine, i, now=now) for i in search_sync.sync_due(engine, now)]
+    return {"dispatch": stats, "pulls": pulls, "digests": sum(digests), "syncs": syncs}

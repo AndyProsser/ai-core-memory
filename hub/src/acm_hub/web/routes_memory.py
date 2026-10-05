@@ -585,7 +585,8 @@ def focus_preview(
             core_budget=inst.core_token_budget,
             include_other_projects=bool(cross),
             touch=False,
-        )  # preview never counts as retrieval
+            use_semantic=True,
+        )  # preview never counts as retrieval; it shows exactly what an assistant would get
     page = "_focus_results.html" if request.headers.get("hx-request") else "focus.html"
     return render(
         request,

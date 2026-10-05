@@ -231,7 +231,7 @@ window); the hub rejects a response without a valid signature, so a tampered ans
 | Operation | Request body | Response body |
 | --- | --- | --- |
 | `GET manifest` | — | `{protocol: 1, key, name, description, kind: "source"\|"sink"\|"both", config: [field…], default_events: […]}` |
-| `validate` | `{instance:{id,name}, config}` | `{ok: true}` or `{ok: false, error}` |
+| `validate` (optional) | `{instance:{id,name}, config}` | `{ok: true}` or `{ok: false, error}`; a `404` means "no extra checks" |
 | `deliver` (sinks) | `{instance, event:{id,type,created_at,link,payload}}` | `{ok, retry?: bool, message?}` |
 | `pull` (sources) | `{instance, config, since: iso8601\|null, limit}` | `{items: [{title, body?, external_ref?}], message?}` |
 | `digest` (sources, optional) | `{instance, config, digest}` | `{ok, message?}` |
@@ -253,6 +253,43 @@ failures are isolated like any plugin's: timeouts, retry with backoff, and an un
 **Writing a service.** `acm_hub.plugins.remote_sdk` is a dependency-free helper (signing, verification, and an ASGI app
 factory); [`hub/examples/remote-feed/`](../hub/examples/remote-feed/README.md) is a complete working source — an RSS/Atom
 feed reader — you can copy. Nothing requires Python: any service that speaks the table above works.
+
+## Search plugins: an optional embedding index
+
+Semantic ("find things that mean the same") search is a plugin, never part of the core path: the hub's own retrieval is
+FTS5 + topics + links (see [ARCHITECTURE.md § Task focus](ARCHITECTURE.md#core-vs-associated)) and works with no model, no
+network and no extra service. A **search plugin** adds a ranked second opinion on top; if it is off, slow or wrong,
+`memory_focus` behaves exactly as it did.
+
+```text
+ hub ──index/remove (what the instance may see)──►  search service   (keeps its own vector index)
+ hub ◄──search(query) → [{id, score}]──────────────  returns IDs only: the hub reads the records itself
+```
+
+- **A new plugin kind, `search`.** It is currently only available as a [remote plugin](#remote-out-of-process-plugins)
+  (the example is [`hub/examples/embedding-index/`](../hub/examples/embedding-index/README.md)). The operations are
+  `index`, `remove`, `reset` and `search`, signed and validated like every other remote call.
+- **The hub keeps the index in sync, by reconciliation rather than by events.** On a schedule (the instance's "sync
+  every N minutes", default 15) and on demand ("Rebuild index"), the hub works out which active records this instance
+  *may* see — the same deny-by-default scope/project allowlist, owner-visibility check and user-scope acknowledgement
+  as any plugin — compares a content hash with what it last sent, and sends only the difference. So records that are
+  edited, archived, superseded, moved out of the allowlist, or that the owner lost access to are **removed** from the
+  service; nothing depends on an event that might have been missed. Egress still applies: at `metadata` the service
+  receives a record's name, description and topics; only at `full` does it also receive the body.
+- **At query time the hub asks, filters and fuses.** `memory_focus` (and the Focus preview) asks the caller's *own*
+  search instances for candidates — an instance serves only its owner, so one person's index never answers another's
+  query — within a short time budget (about 2 s). Whatever ids come back are re-checked against the caller's access
+  (a service can't surface a record the caller couldn't read, nor an archived one), then merged with the FTS ranking by
+  reciprocal-rank fusion, and each hit says why (`semantic match`). A failure or timeout adds a note and nothing else.
+- **What it can and can't do to you.** The service sees the text you chose to send it (same as any `full`-egress sink),
+  and it can bias *ranking*. It cannot add or alter a record, cannot widen what a caller can read, and its answers are
+  strictly validated (ids and bounded scores only, at most 50 results).
+
+**The example service** ships a dependency-free default (hashed word and bigram vectors with cosine similarity: it works
+offline with nothing to download, and is honest about being lexical rather than truly semantic) and can call a real
+embedding model over HTTP — an Ollama server, or any OpenAI-compatible `/v1/embeddings` endpoint — by environment variable.
+The model-backed paths are tested against local stand-ins for those APIs, **not against a real Ollama or OpenAI
+server**.
 
 ## Plugins vs. AI clients that already have connectors
 

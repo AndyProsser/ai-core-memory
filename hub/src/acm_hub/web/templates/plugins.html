@@ -47,7 +47,7 @@
 {% for p in available %}
 <div class="card">
   <strong>{{ p.info.name }}</strong>
-  <span class="badge">{{ {'source': 'brings notes in', 'sink': 'sends notifications', 'both': 'both ways'}[p.info.kind] }}</span>{% if p.remote %} <span class="badge">runs outside the hub</span>{% endif %}
+  <span class="badge">{{ {'source': 'brings notes in', 'sink': 'sends notifications', 'both': 'both ways', 'search': 'adds semantic search'}[p.info.kind] }}</span>{% if p.remote %} <span class="badge">runs outside the hub</span>{% endif %}
   <p class="desc">{{ p.info.description }}</p>
   <a class="btn" href="/plugins/new?plugin={{ p.info.key }}">Add</a>
 </div>

@@ -59,6 +59,10 @@ def create_app(
     pull: Handler | None = None,
     digest: Handler | None = None,
     validate: Handler | None = None,
+    index: Handler | None = None,
+    remove: Handler | None = None,
+    reset: Handler | None = None,
+    search: Handler | None = None,
 ):  # noqa: ANN201
     """Build an ASGI app. Handlers are plain synchronous functions (run in a worker thread):
 
@@ -66,6 +70,12 @@ def create_app(
     pull(instance, config, since, limit) -> {"items": [{"title", "body", "external_ref"}]}
     digest(instance, config, digest) -> {"ok": bool}
     validate(instance, config) -> {"ok": True} or {"ok": False, "error": "..."}
+
+    A `search` service (manifest kind "search") instead implements:
+    index(instance, records) -> {"ok": True}        upsert records the hub may let it see
+    remove(instance, ids) -> {"ok": True}           forget records (edited out of scope, archived, deleted)
+    reset(instance) -> {"ok": True}                 forget everything for this instance
+    search(instance, query, limit) -> {"results": [{"id": "...", "score": 0.83}]}
     """
     if len(secret) < MIN_SECRET_LENGTH:
         raise ValueError(f"the signing secret must be at least {MIN_SECRET_LENGTH} characters")
@@ -75,6 +85,10 @@ def create_app(
         "pull": pull,
         "digest": digest,
         "validate": validate,
+        "index": index,
+        "remove": remove,
+        "reset": reset,
+        "search": search,
     }
 
     async def respond(send, status: int, payload: dict[str, Any], timestamp: str) -> None:  # noqa: ANN001
@@ -128,6 +142,16 @@ def create_app(
             elif op == "digest":
                 out = await asyncio.to_thread(
                     handler, data.get("instance", {}), data.get("config", {}), data.get("digest", {})
+                )
+            elif op == "index":
+                out = await asyncio.to_thread(handler, data.get("instance", {}), data.get("records", []))
+            elif op == "remove":
+                out = await asyncio.to_thread(handler, data.get("instance", {}), data.get("ids", []))
+            elif op == "reset":
+                out = await asyncio.to_thread(handler, data.get("instance", {}))
+            elif op == "search":
+                out = await asyncio.to_thread(
+                    handler, data.get("instance", {}), data.get("query", ""), data.get("limit", 20)
                 )
             else:
                 out = await asyncio.to_thread(handler, data.get("instance", {}), data.get("config", {}))

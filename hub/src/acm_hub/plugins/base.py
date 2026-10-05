@@ -29,7 +29,7 @@ class PluginInfo(BaseModel):
     key: str
     name: str
     description: str = ""
-    kind: Literal["source", "sink", "both"]
+    kind: Literal["source", "sink", "both", "search"]
     config_schema: type[BaseModel]  # non-secret settings, rendered as a form in the Plugins screen
     secret_names: list[
         str
@@ -111,4 +111,17 @@ class BasePlugin:
         raise NotImplementedError
 
     def export_digest(self, ctx: PluginContext, digest: dict[str, Any]) -> None:  # sources, optional
+        raise NotImplementedError
+
+    # search plugins (docs/PLUGINS.md § Search plugins): the hub keeps the index in step and asks for candidate ids
+    def index(self, ctx: PluginContext, records: list[dict[str, Any]]) -> None:
+        raise NotImplementedError
+
+    def remove(self, ctx: PluginContext, ids: list[str]) -> None:
+        raise NotImplementedError
+
+    def reset(self, ctx: PluginContext) -> None:
+        raise NotImplementedError
+
+    def search(self, ctx: PluginContext, query: str, limit: int, timeout: float) -> list[tuple[str, float]]:
         raise NotImplementedError

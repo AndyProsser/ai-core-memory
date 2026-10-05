@@ -51,7 +51,11 @@ class EgressClient:
 
     def request(self, method: str, url: str, **kw) -> httpx.Response:  # noqa: ANN003
         check_url(url, self.allowed_hosts)
-        with httpx.Client(timeout=TIMEOUT, follow_redirects=False, transport=_transport) as c:
+        t = kw.pop(
+            "timeout", None
+        )  # a caller with a tight budget (a search query) can ask for less, never more
+        timeout = httpx.Timeout(min(float(t), 10.0), connect=min(float(t), 5.0)) if t else TIMEOUT
+        with httpx.Client(timeout=timeout, follow_redirects=False, transport=_transport) as c:
             with c.stream(method, url, **kw) as r:
                 body = b""
                 for chunk in r.iter_bytes():
