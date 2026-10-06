@@ -348,6 +348,13 @@ to the wrong Slack channel can't be un-posted.
   rate limits, and failures that can't block writes or other plugins. Outbound HTTP
   from plugins goes through one egress helper that refuses non-HTTPS targets (except
   localhost/RFC1918) and can be restricted by an operator-configured host allowlist.
+  "RFC1918" means a literal private IP by default. `MEMORY_HUB_EGRESS_RESOLVE_PRIVATE=true` (off by
+  default) extends it to a _hostname_ whose every DNS answer is loopback/private — a Kubernetes
+  Service name, a LAN hostname — so in-cluster plain-http targets work without IP literals. Any public
+  answer, or a failed lookup, still refuses. The egress client then connects to the exact address it
+  checked (with the original `Host` header), so DNS that changes between the check and the request
+  can't redirect plaintext traffic to a public host. Trade-off when enabled: whoever controls the
+  hub's DNS decides what counts as "private" — appropriate when that's your own cluster/LAN resolver.
 - **Auditable.** Every delivery and every inbound pull is recorded (`plugin_deliveries`,
   last status/error on the instance) and visible in the Plugins screen. (Source plugins only add inbox
   items, so there are no `plugin`-sourced revisions to audit; what they capture is marked `plugin:<key>`.)
@@ -358,8 +365,9 @@ to the wrong Slack channel can't be un-posted.
   its **owner could read themselves**; `user` scope needs the acknowledgement _and_ is only ever the owner's
   own; payloads never contain record bodies (full text is fetched at delivery time, only at `egress: full`,
   only if the record is itself allowed); secrets are env-var _names_ in the database and are scrubbed from
-  stored errors and logs; the egress client refuses non-HTTPS (except localhost/private LAN), follows no
-  redirects, honours the host allowlist and caps response size; an instance never receives events its own
+  stored errors and logs; the egress client refuses non-HTTPS (except localhost/private LAN, and — only
+  with `MEMORY_HUB_EGRESS_RESOLVE_PRIVATE` — hostnames resolving solely to private addresses, connected to
+  by the checked IP), follows no redirects, honours the host allowlist and caps response size; an instance never receives events its own
   activity caused; plugins are admin-configured only; the offline CLI never loads plugin code; plugin
   failures, hangs and floods are isolated and rate-limited.
 - _Tested by mutation:_ removing the user-scope acknowledgement check, the owner-visibility check, secret
@@ -367,7 +375,8 @@ to the wrong Slack channel can't be un-posted.
 - _Limits, stated plainly:_ in-process plugins are **trusted code running in the hub process** — an installed
   plugin could do anything the hub process can; the guards above constrain plugins that use the provided context,
   not a malicious one. **Remote plugins** (below) remove that limit for code you don't trust. `apprise` does its own HTTP (the hub validates the URLs it is given, but doesn't proxy
-  the traffic). A hung plugin call is abandoned, not killed. The plugin scheduler is in-process, so run a
+  the traffic — so with `MEMORY_HUB_EGRESS_RESOLVE_PRIVATE` on, an Apprise plaintext target's hostname is checked
+  but not pinned; Apprise resolves it again itself). A hung plugin call is abandoned, not killed. The plugin scheduler is in-process, so run a
   single hub process. Nothing stops an operator from choosing `egress: full` and a public channel, so the
   Plugins screen flags full-text and personal-memory instances loudly.
 

@@ -8,9 +8,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
-from ...security import is_local_or_private
 from ..base import BasePlugin, DeliveryResult, Event, PluginContext, PluginInfo
-from ..egress import check_url
+from ..egress import check_url, plaintext_allowed
 from ..text import render
 
 PLAINTEXT_SCHEMES = {
@@ -35,7 +34,7 @@ def _check_targets(urls: list[str], allowed_hosts: list[str]) -> str | None:
     for u in urls:
         parts = urlsplit(u)
         scheme = parts.scheme.lower()
-        if scheme in PLAINTEXT_SCHEMES and not is_local_or_private(parts.hostname):
+        if scheme in PLAINTEXT_SCHEMES and not plaintext_allowed(parts.hostname):
             return f"{scheme}:// sends in plain text; use {scheme}s:// (plain http is only allowed to localhost or a private network)."
         if scheme in HTTPISH:  # same host rules as every other plugin egress
             try:

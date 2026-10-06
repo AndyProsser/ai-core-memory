@@ -153,7 +153,8 @@ Honest notes on each:
 
 - **`apprise`** does its own HTTP, so it doesn't go through the shared egress client. The hub instead
   checks the _URLs_ before handing them over: plaintext targets (`json://`, `form://`, `xml://`,
-  `http://`) are refused unless they point at localhost or a private network (use `jsons://` etc.), and
+  `http://`) are refused unless they point at localhost or a private network (use `jsons://` etc.; a
+  private-resolving hostname counts only with `MEMORY_HUB_EGRESS_RESOLVE_PRIVATE`, see SECURITY.md), and
   generic http(s)/json targets honour the instance's `allowed_hosts`. Chat-service URLs
   (`slack://`, `msteams://`, `ntfys://`, …) are passed through. Install with the `notify` extra
   (`pip install 'ai-core-memory-hub[notify]'`; the container image includes it). It is tested against a
@@ -212,7 +213,9 @@ HTTP service the hub talks to; it shares nothing with the hub process.
 ```
 
 `key` is lower-case `a-z0-9-` and can't collide with a built-in or entry-point plugin. `url` follows the egress rules
-(https, or http only to localhost/a private network; no redirects). `secret_env` names the environment variable holding
+(https, or http only to localhost/a private network; no redirects). A Kubernetes Service name like
+`http://feed-plugin:9000` is a hostname, not a private IP, so it needs `MEMORY_HUB_EGRESS_RESOLVE_PRIVATE=true` (see
+[SECURITY.md § Plugins and egress](SECURITY.md#plugins-and-egress)). `secret_env` names the environment variable holding
 the signing key, which must be at least 32 characters.
 
 **Protocol v1.** Every call is `POST <url>/acm/v1/<operation>` with a JSON body, except the manifest (`GET`). Calls

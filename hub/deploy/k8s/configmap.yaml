@@ -11,8 +11,12 @@ data:
   MEMORY_HUB_TRUST_PROXY: "true"
   MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS: "24"
   MEMORY_HUB_PLUGINS: "true"
+  # Let plugins use plain http to in-cluster Service names (every DNS answer must be private; the connection is pinned
+  # to the checked IP). Off by default; https targets never need it. See docs/SECURITY.md § Plugins and egress.
+  MEMORY_HUB_EGRESS_RESOLVE_PRIVATE: "false"
   # Let Claude.ai connectors sign in (MCP OAuth). Needs the https PUBLIC_URL above and an ingress that forwards
   # /.well-known/*, /authorize, /token, /register, /revoke and /oauth/consent. See docs/SECURITY.md § MCP OAuth.
   MEMORY_HUB_OAUTH_ENABLED: "false"
   # Remote (out-of-process) plugins: a JSON list of {key, url, secret_env}; the signing keys go in the Secret.
   # MEMORY_HUB_REMOTE_PLUGINS: '[{"key":"feed","url":"http://feed-plugin:9000","secret_env":"FEED_PLUGIN_SECRET"}]'
+  # (a Service-name URL like that one needs MEMORY_HUB_EGRESS_RESOLVE_PRIVATE: "true" above)

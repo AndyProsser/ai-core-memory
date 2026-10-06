@@ -77,6 +77,9 @@ with these deliberate defaults:
   addresses — see [SECURITY.md](SECURITY.md)).
 - `MEMORY_HUB_SECRET_KEY` is **required** — compose refuses to start without it.
 - `MEMORY_HUB_PLUGINS` (default `true`) is the master switch for plugin execution.
+- `MEMORY_HUB_EGRESS_RESOLVE_PRIVATE` (default `false`) lets plugins use plain `http://` to a hostname whose every
+  DNS answer is private (compose service names, Kubernetes Services, LAN hostnames) instead of only literal private
+  IPs. See [SECURITY.md § Plugins and egress](SECURITY.md#plugins-and-egress).
 - `MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS` (default `24`, `0` disables) sets how often the hub runs its
   mechanical consolidation pass (decay, duplicate candidates, core budget). It's restart-safe (the last-run
   time is in the database) and you can always run it by hand: `acm consolidate [--dry-run]`.
