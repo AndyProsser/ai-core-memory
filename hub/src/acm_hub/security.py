@@ -6,9 +6,11 @@ API tokens, recognisable token prefix, constant-time comparisons, plaintext-HTTP
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import ipaddress
+import json
 import secrets
 import threading
 import time
@@ -75,6 +77,41 @@ def new_csrf_token() -> str:
 
 def safe_equal(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode(), b.encode())
+
+
+# --- short-lived signed blobs ----------------------------------------------------------------------
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _blob_mac(secret: str, purpose: str, body: str) -> str:
+    # The purpose is part of what is signed, so a blob minted for one use can't be replayed for another.
+    return _b64(hmac.new(secret.encode(), f"acm-blob:{purpose}:{body}".encode(), hashlib.sha256).digest())
+
+
+def sign_blob(secret: str, purpose: str, payload: dict, *, ttl: int) -> str:
+    """`<body>.<mac>`: tamper-evident and expiring, not encrypted. Keep secrets out of the payload."""
+    body = _b64(json.dumps({**payload, "exp": int(time.time()) + ttl}, separators=(",", ":")).encode())
+    return f"{body}.{_blob_mac(secret, purpose, body)}"
+
+
+def verify_blob(secret: str, purpose: str, blob: str) -> dict | None:
+    body, _, mac = (blob or "").partition(".")
+    if not body or not safe_equal(mac, _blob_mac(secret, purpose, body)):
+        return None
+    try:
+        payload = json.loads(_unb64(body))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict) or int(payload.get("exp", 0)) <= time.time():
+        return None
+    return payload
 
 
 # --- network policy ------------------------------------------------------------------------------

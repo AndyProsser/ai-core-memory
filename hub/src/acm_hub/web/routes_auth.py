@@ -25,6 +25,8 @@ from ..security import (
     hash_token,
     new_csrf_token,
     safe_equal,
+    sign_blob,
+    verify_blob,
     verify_password,
 )
 from .deps import Ctx, get_db, render, require_user, set_session_cookie, user_csrf
@@ -32,6 +34,9 @@ from .deps import Ctx, get_db, render, require_user, set_session_cookie, user_cs
 router = APIRouter()
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 OIDC_BINDING_COOKIE = "acm_oidc"
+LINK_COOKIE = "acm_oidc_link"  # a verified SSO identity waiting for its local account's password
+LINK_PURPOSE = "oidc-link"
+LINK_TTL = 600
 
 
 def _safe_next(nxt: str | None) -> str:
@@ -45,6 +50,10 @@ def _same_origin(request: Request) -> bool:
     from urllib.parse import urlsplit
 
     return origin != "null" and urlsplit(origin).netloc == request.headers.get("host", "")
+
+
+def _local_login_allowed(user: User, inst: InstanceSettings | None) -> bool:
+    return bool(user.is_active and (user.is_admin or (inst and inst.local_login_enabled)))
 
 
 def _ip(request: Request) -> str:
@@ -99,7 +108,7 @@ def login(
         )
     user = db.exec(select(User).where(User.email == email_n)).first()
     inst = db.get(InstanceSettings, 1)
-    allowed = bool(user and user.is_active and (user.is_admin or (inst and inst.local_login_enabled)))
+    allowed = bool(user and _local_login_allowed(user, inst))
     ok = verify_password(
         user.password_hash if user and allowed else None, password
     )  # constant-ish time for unknown users
@@ -300,16 +309,40 @@ async def oidc_callback(
         if invited:
             invited.external_id = key
             user = invited
-        elif inst.oidc_provisioning == "auto":
-            if db.exec(select(User).where(User.email == email)).first():
+        else:
+            existing = db.exec(select(User).where(User.email == email)).first()
+            if (
+                existing
+                and existing.auth_provider == "local"
+                and existing.external_id is None
+                and existing.password_hash
+                and _local_login_allowed(existing, inst)
+            ):
+                # Never link on an email match alone: whoever controls that address at the provider
+                # would own the account. Park the identity until the account's own password proves it.
+                resp = RedirectResponse("/auth/oidc/link", status_code=303)
+                resp.delete_cookie(OIDC_BINDING_COOKIE, path="/auth/oidc")
+                resp.set_cookie(
+                    LINK_COOKIE,
+                    sign_blob(
+                        settings.secret_key, LINK_PURPOSE, {"uid": existing.id, "key": key}, ttl=LINK_TTL
+                    ),
+                    httponly=True,
+                    samesite="lax",
+                    secure=settings.public_url.startswith("https"),
+                    max_age=LINK_TTL,
+                    path="/auth/oidc/link",
+                )
+                return resp
+            if existing:
                 return bad(
-                    "An account with this email already exists. Ask an admin to invite your SSO identity.",
+                    "An account with this email already exists and can't be linked here. Ask an admin to invite your SSO identity.",
                     403,
                 )
+            if inst.oidc_provisioning != "auto":
+                return bad("This hub is invite-only. Ask an admin to invite your email.", 403)
             user = User(email=email, auth_provider="oidc", external_id=key)
             db.add(user)
-        else:
-            return bad("This hub is invite-only. Ask an admin to invite your email.", 403)
         db.flush()
     if not user.is_active:
         return bad("This account has been deactivated. Ask an admin.", 403)
@@ -327,4 +360,75 @@ async def oidc_callback(
         resp = RedirectResponse("/memory", status_code=303)
         set_session_cookie(request, resp, raw)
     resp.delete_cookie(OIDC_BINDING_COOKIE, path="/auth/oidc")
+    return resp
+
+
+# --- linking an SSO identity to an existing local account ---------------------------------------------
+
+
+def _pending_link(request: Request, db: Session) -> tuple[User, str] | None:
+    claim = verify_blob(
+        request.app.state.settings.secret_key, LINK_PURPOSE, request.cookies.get(LINK_COOKIE, "")
+    )
+    user = db.get(User, claim.get("uid")) if claim else None
+    if not (claim and user and isinstance(claim.get("key"), str)):
+        return None
+    return user, claim["key"]
+
+
+def _link_page(request: Request, user: User, *, error: str = "", status: int = 200):  # noqa: ANN202
+    return render(request, "link.html", None, status=status, error=error, email=user.email)
+
+
+def _to_login(request: Request):  # noqa: ANN202
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie(LINK_COOKIE, path="/auth/oidc/link")
+    return resp
+
+
+@router.get("/auth/oidc/link")
+def oidc_link_form(request: Request, db: Session = Depends(get_db)):  # noqa: ANN201
+    pending = _pending_link(request, db)
+    return _link_page(request, pending[0]) if pending else _to_login(request)
+
+
+@router.post("/auth/oidc/link")
+def oidc_link(request: Request, password: str = Form(""), db: Session = Depends(get_db)):  # noqa: ANN201
+    if not _same_origin(request):
+        return _login_page(request, db, error="Request blocked (cross-origin).", status=403)
+    pending = _pending_link(request, db)
+    if pending is None:
+        return _to_login(request)
+    user, key = pending
+    throttle = request.app.state.login_throttle
+    keys = (
+        f"acct:{user.email}",
+        f"ip:{_ip(request)}",
+    )  # the same budget as /login, so this isn't a second guess path
+    if any(throttle.blocked(k) for k in keys):
+        return _link_page(
+            request, user, error="Too many failed attempts. Try again in a few minutes.", status=429
+        )
+    inst = db.get(InstanceSettings, 1)
+    taken = db.exec(select(User).where(User.external_id == key)).first()
+    if (
+        user.external_id is not None
+        or user.auth_provider != "local"
+        or taken is not None
+        or not _local_login_allowed(user, inst)
+    ):
+        return _link_page(request, user, error="This account can't be linked. Ask an admin.", status=403)
+    if not verify_password(user.password_hash, password):
+        for k in keys:
+            throttle.failure(k)
+        return _link_page(request, user, error="Wrong password.", status=401)
+    for k in keys:
+        throttle.success(k)
+    user.external_id = key
+    db.add(user)
+    raw, _ = create_web_session(db, user, request.app.state.settings)
+    db.commit()
+    resp = RedirectResponse("/memory", status_code=303)
+    set_session_cookie(request, resp, raw)
+    resp.delete_cookie(LINK_COOKIE, path="/auth/oidc/link")
     return resp

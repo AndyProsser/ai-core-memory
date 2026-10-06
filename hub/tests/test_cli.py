@@ -228,3 +228,21 @@ def test_rejecting_a_proposal_means_it_is_not_raised_again(settings, monkeypatch
         "rejected" in run(monkeypatch, capsys, "review", "--all")[1]
         or pid in run(monkeypatch, capsys, "review", "--all")[1]
     )
+
+
+def test_user_set_email_changes_a_local_admins_address(settings, monkeypatch, capsys):
+    make_admin(monkeypatch, capsys, "andy@example.com")
+    code, out, _ = run(monkeypatch, capsys, "user", "set-email", "andy@example.com", "andy+hub@example.com")
+    assert code == 0 and "andy+hub@example.com" in out
+    _, listing, _ = run(monkeypatch, capsys, "user", "list")
+    assert "andy+hub@example.com" in listing and "andy@example.com\t" not in listing
+
+
+def test_user_set_email_refuses_bad_input(settings, monkeypatch, capsys):
+    make_admin(monkeypatch, capsys, "andy@example.com")
+    run(monkeypatch, capsys, "user", "create", "--oidc", "bob@example.com")
+    assert (
+        run(monkeypatch, capsys, "user", "set-email", "andy@example.com", "bob@example.com")[0] != 0
+    )  # taken
+    assert run(monkeypatch, capsys, "user", "set-email", "andy@example.com", "not-an-email")[0] != 0
+    assert run(monkeypatch, capsys, "user", "set-email", "ghost@example.com", "g@example.com")[0] != 0

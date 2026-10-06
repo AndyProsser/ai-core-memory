@@ -203,13 +203,159 @@ def test_unverified_email_is_refused(sso):
 
 
 def test_existing_local_account_cannot_be_taken_over_by_matching_email(sso):
+    """A matching verified email alone never links: the callback only parks the identity for a password check."""
     client, app, idp = sso
     q = begin(client, idp, email="admin@example.com", sub="attacker")
     r = finish(client, q["state"][0])
-    assert r.status_code == 403
+    assert r.status_code == 303 and r.headers["location"] == "/auth/oidc/link"
+    assert client.get("/memory", follow_redirects=False).status_code == 303  # still signed out
     with Session(app.state.engine) as s:
         admin = s.exec(select(User).where(User.email == "admin@example.com")).one()
         assert admin.external_id is None and admin.auth_provider == "local"
+
+
+def start_link(client, idp, email="admin@example.com", sub="andy-sso"):
+    q = begin(client, idp, email=email, sub=sub)
+    r = finish(client, q["state"][0])
+    assert r.status_code == 303 and r.headers["location"] == "/auth/oidc/link", r.text
+    return r
+
+
+def link(client, password=PASSWORD, **headers):
+    return client.post(
+        "/auth/oidc/link", data={"password": password}, headers=headers, follow_redirects=False
+    )
+
+
+def test_link_page_needs_a_pending_link(sso):
+    client, *_ = sso
+    r = client.get("/auth/oidc/link", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+    assert link(client).status_code == 303  # POST with no pending identity: bounced, nothing linked
+
+
+def test_correct_password_links_the_sso_identity_and_signs_in(sso):
+    client, app, idp = sso
+    start_link(client, idp)
+    page = client.get("/auth/oidc/link")
+    assert page.status_code == 200 and "admin@example.com" in page.text
+    r = link(client)
+    assert r.status_code == 303 and r.headers["location"] == "/memory"
+    assert client.get("/memory").status_code == 200
+    with Session(app.state.engine) as s:
+        u = s.exec(select(User).where(User.email == "admin@example.com")).one()
+        assert u.external_id == f"{ISSUER}|andy-sso"
+        assert u.is_admin and u.auth_provider == "local" and u.password_hash  # still the same local admin
+        assert s.exec(select(User)).all().__len__() == 1  # no second account was created
+    client.cookies.clear()  # next time SSO alone is enough, and lands on the same account
+    q = begin(client, idp, email="admin@example.com", sub="andy-sso")
+    assert finish(client, q["state"][0]).headers["location"] == "/memory"
+    client.cookies.clear()
+    r = client.post(
+        "/login", data={"email": "admin@example.com", "password": PASSWORD}, follow_redirects=False
+    )
+    assert r.status_code == 303  # and the local password still works
+
+
+def test_wrong_password_does_not_link(sso):
+    client, app, idp = sso
+    start_link(client, idp)
+    r = link(client, password="not the password at all")
+    assert r.status_code == 401
+    assert client.get("/memory", follow_redirects=False).status_code == 303
+    with Session(app.state.engine) as s:
+        assert s.exec(select(User).where(User.email == "admin@example.com")).one().external_id is None
+
+
+def test_link_attempts_share_the_login_lockout(sso):
+    client, app, idp = sso
+    start_link(client, idp)
+    for _ in range(8):
+        assert link(client, password="wrong wrong wrong").status_code == 401
+    assert link(client).status_code == 429  # even the right password is refused once locked out
+    with Session(app.state.engine) as s:
+        assert s.exec(select(User).where(User.email == "admin@example.com")).one().external_id is None
+
+
+def test_link_is_refused_cross_origin(sso):
+    client, app, idp = sso
+    start_link(client, idp)
+    assert link(client, origin="https://evil.example").status_code == 403
+    with Session(app.state.engine) as s:
+        assert s.exec(select(User).where(User.email == "admin@example.com")).one().external_id is None
+
+
+def test_tampered_or_expired_link_cookie_is_rejected(sso):
+    from acm_hub.web.routes_auth import LINK_COOKIE
+
+    client, app, idp = sso
+    start_link(client, idp)
+    good = client.cookies.get(LINK_COOKIE)
+    payload, _, mac = good.rpartition(".")
+    client.cookies.set(LINK_COOKIE, f"{payload}.{'0' * len(mac)}", path="/auth/oidc/link")
+    assert link(client).status_code == 303 and link(client).headers["location"] == "/login"
+    from acm_hub.security import sign_blob
+
+    admin_id = None
+    with Session(app.state.engine) as s:
+        admin_id = s.exec(select(User).where(User.email == "admin@example.com")).one().id
+    expired = sign_blob(app.state.settings.secret_key, "oidc-link", {"uid": admin_id, "key": "x|y"}, ttl=-1)
+    client.cookies.set(LINK_COOKIE, expired, path="/auth/oidc/link")
+    assert link(client).headers["location"] == "/login"
+    wrong_purpose = sign_blob(
+        app.state.settings.secret_key, "other", {"uid": admin_id, "key": "x|y"}, ttl=300
+    )
+    client.cookies.set(LINK_COOKIE, wrong_purpose, path="/auth/oidc/link")
+    assert link(client).headers["location"] == "/login"
+    with Session(app.state.engine) as s:
+        assert s.exec(select(User).where(User.email == "admin@example.com")).one().external_id is None
+
+
+def test_account_already_linked_to_another_identity_is_not_relinked(sso):
+    client, app, idp = sso
+    with Session(app.state.engine) as s:
+        a = s.exec(select(User).where(User.email == "admin@example.com")).one()
+        a.external_id = f"{ISSUER}|someone-else"
+        s.add(a)
+        s.commit()
+    q = begin(client, idp, email="admin@example.com", sub="attacker")
+    assert finish(client, q["state"][0]).status_code == 403
+
+
+def test_deactivated_account_cannot_be_linked(sso):
+    client, app, idp = sso
+    start_link(client, idp)
+    with Session(app.state.engine) as s:  # deactivated between the SSO round trip and the password step
+        a = s.exec(select(User).where(User.email == "admin@example.com")).one()
+        a.is_active = False
+        s.add(a)
+        s.commit()
+    assert link(client).status_code == 403
+    with Session(app.state.engine) as s:
+        assert s.exec(select(User).where(User.email == "admin@example.com")).one().external_id is None
+
+
+def test_link_also_works_in_invite_only_mode(sso):
+    client, app, idp = sso
+    with Session(app.state.engine) as s:
+        inst = s.get(InstanceSettings, 1)
+        inst.oidc_provisioning = "invite"
+        s.add(inst)
+        s.commit()
+    start_link(client, idp)
+    assert link(client).headers["location"] == "/memory"
+
+
+def test_signed_blobs_round_trip_and_reject_tampering():
+    from acm_hub.security import sign_blob, verify_blob
+
+    blob = sign_blob("k" * 32, "p", {"a": 1}, ttl=60)
+    assert (verify_blob("k" * 32, "p", blob) or {}).get("a") == 1
+    assert verify_blob("j" * 32, "p", blob) is None  # wrong key
+    assert verify_blob("k" * 32, "q", blob) is None  # wrong purpose
+    assert verify_blob("k" * 32, "p", blob + "x") is None  # tampered
+    assert verify_blob("k" * 32, "p", "garbage") is None
+    assert verify_blob("k" * 32, "p", sign_blob("k" * 32, "p", {"a": 1}, ttl=-1)) is None  # expired
 
 
 def test_invite_only_mode(sso):

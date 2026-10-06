@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Link single sign-on{% endblock %}
+{% block public %}
+<h1>Link single sign-on</h1>
+<p class="muted">Your identity provider confirmed this email, and a hub account for <strong>{{ email }}</strong> already exists.
+Enter that account's password once to link the two. After that, either way of signing in opens the same account.</p>
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+<form method="post" action="/auth/oidc/link" class="card">
+  <label for="p">Password for {{ email }}</label>
+  <input id="p" type="password" name="password" autocomplete="current-password" required autofocus>
+  <div class="actions"><button class="primary" type="submit">Link and sign in</button> <a href="/login">Cancel</a></div>
+</form>
+{% endblock %}

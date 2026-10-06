@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import re
 import sys
 from pathlib import Path
 
@@ -172,6 +173,23 @@ def cmd_user_set_password(args: argparse.Namespace) -> int:
         db.add(user)
         db.commit()
         print("Password updated.")
+    return 0
+
+
+def cmd_user_set_email(args: argparse.Namespace) -> int:
+    old, new = args.old.strip().lower(), args.new.strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", new):
+        raise CliError("Enter a valid email address.")
+    with _open() as db:
+        user = db.exec(select(User).where(User.email == old)).first()
+        if not user:
+            raise CliError("No such user.")
+        if db.exec(select(User).where(User.email == new)).first():
+            raise CliError(f"{new} already has an account.")
+        user.email = new
+        db.add(user)
+        db.commit()
+        print(f"{old} is now {new}.")
     return 0
 
 
@@ -866,6 +884,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--password-stdin", action="store_true", help="read the password from stdin instead of prompting"
     )
     usub.add_parser("list", help="list users").set_defaults(fn=cmd_user_list)
+    se = usub.add_parser("set-email", help="change a user's email (e.g. to free it for their SSO identity)")
+    se.set_defaults(fn=cmd_user_set_email)
+    se.add_argument("old")
+    se.add_argument("new")
     sp = usub.add_parser("set-password", help="set or reset a local password")
     sp.set_defaults(fn=cmd_user_set_password)
     sp.add_argument("email")

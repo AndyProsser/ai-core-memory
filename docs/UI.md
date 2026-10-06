@@ -128,6 +128,9 @@ Offline-first and explicit:
 
 - **Account** — email, password (local accounts), linked SSO identity, **Theme**
   (System / Light / Dark).
+- **Link single sign-on** (`/auth/oidc/link`, not a Settings tab) — shown when someone signs in with SSO
+  and a local account already has their verified email: enter that account's password once to
+  link the two. Reached only from the SSO callback; see SECURITY.md → OIDC details.
 - **Encrypted private memory** — enable (passphrase + confirmation; the **recovery key** appears once on its own page,
   never in a URL), unlock/lock this session, change passphrase, regenerate the recovery key, recover, and turn off
   (needs the passphrase and typing "decrypt"). While your session is locked, a banner on every page says so and

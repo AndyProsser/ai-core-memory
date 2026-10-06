@@ -178,8 +178,20 @@ account (pre-invite only).
   provider can't silently hand one person another's account. Email is used to match a
   pre-invited account on first login, and only when the provider reports
   `email_verified`.
+- **Linking an SSO identity to an existing local account needs that account's password.**
+  A verified-email match alone is never enough — whoever controls that address at the
+  provider (a misconfigured or compromised IdP, a reused address) would otherwise own the
+  account, which may be an admin. Instead the callback parks the verified identity in a
+  signed, HttpOnly, 10-minute cookie scoped to `/auth/oidc/link` (HMAC with
+  `MEMORY_HUB_SECRET_KEY`, bound to one purpose and one account; nothing is stored
+  server-side), and the user proves the local password there. That form shares the login
+  lockout (same per-account and per-address budget, so it is not a second guessing path),
+  is same-origin only, and refuses deactivated accounts, accounts already linked to a
+  different identity, and accounts whose local login is disabled. A successful link sets
+  the identity key on the existing account; it never creates a second one, and local
+  login keeps working alongside SSO.
 - **Local admin stays as the recovery path.** The bootstrap admin keeps a local password
-  even when OIDC is enabled, and `acm user` can create or reset a local admin from the
+  even when OIDC is enabled, and `acm user` can create or reset a local admin (and `acm user set-email` change its address) from the
   host (see CLI access below), so a broken or misconfigured IdP never locks the operator
   out of their own data. An instance can disable local login for non-admin users.
 - **Optional later:** map OIDC group claims to team membership/roles. Not in the first
