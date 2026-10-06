@@ -102,3 +102,31 @@ def test_a_real_looking_browser_post_with_origin_passes_csrf(authed):
     )
     with Session(app.state.engine) as s:
         assert s.exec(select(Project).where(Project.slug == "no-cookie")).first() is None
+
+
+def test_a_proposal_card_form_carries_a_real_token_and_works(authed):
+    """The proposal card was once imported without template context, so Approve/Dismiss posted an empty token."""
+    from acm_hub import proposals as pr
+    from acm_hub.access import principal_for_user
+    from acm_hub.models import MemoryRecord
+
+    client, app, meta_token = authed
+    client.post(
+        "/api/v1/records",
+        json={"name": "to-retire", "description": "d", "type": "feedback", "scope": "user"},
+        headers={"X-CSRF-Token": meta_token},
+    )
+    with Session(app.state.engine) as s:
+        rid = s.exec(select(MemoryRecord)).first().id
+        human = principal_for_user(s, s.exec(select(User)).one())
+        pr.create_proposal(s, human, "mark_stale", {"record": rid}, rationale="old")
+        s.commit()
+    page = client.get("/review").text
+    pid = re.search(r'action="/review/proposals/([0-9A-Z]{26})"', page).group(1)
+    form = page.split(f'action="/review/proposals/{pid}"', 1)[1].split("</form>", 1)[0]
+    token = HIDDEN.search(form).group(1)
+    assert token and token == csrf_of(page), "proposal form's hidden csrf_token is empty or wrong"
+    r = client.post(
+        f"/review/proposals/{pid}", data={"csrf_token": token, "action": "approve"}, follow_redirects=False
+    )
+    assert r.status_code == 303
