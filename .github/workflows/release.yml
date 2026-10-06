@@ -1,0 +1,71 @@
+# Release = bump `version` in hub/pyproject.toml and push to main. This workflow then:
+#   1. reads the version (the single source of truth) and skips if vX.Y.Z already exists,
+#   2. runs the full hub workflow (tests, smoke test, publish ghcr.io/<owner>/ai-core-memory-hub:X.Y.Z, :X.Y, :latest),
+#   3. only if that succeeded, creates the vX.Y.Z tag and a GitHub Release with generated notes.
+# "Run workflow" in the Actions tab does the same for the current version on main. Nothing here needs a personal token.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths: ["hub/pyproject.toml"]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          version=$(python3 -c "import tomllib;print(tomllib.load(open('hub/pyproject.toml','rb'))['project']['version'])")
+          echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::version '$version' is not X.Y.Z"; exit 1; }
+          grep -q "^__version__ = \"$version\"" hub/src/acm_hub/__init__.py \
+            || { echo "::error::hub/src/acm_hub/__init__.py __version__ does not match pyproject ($version)"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "v$version already exists; nothing to release."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    uses: ./.github/workflows/hub.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+
+  tag:
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes
+          {
+            echo "### Released v$VERSION"
+            echo "Image: \`ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/ai-core-memory-hub:$VERSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"

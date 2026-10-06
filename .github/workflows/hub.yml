@@ -2,6 +2,7 @@
 #   pull requests  -> test + build + smoke-test the image (nothing is pushed)
 #   push to main   -> the same, then push ghcr.io/<owner>/ai-core-memory-hub:latest and :sha-<short>
 #   tag vX.Y.Z     -> the same, then push :X.Y.Z, :X.Y and :latest
+#   called by release.yml with a version -> the same as a tag push (release.yml creates the tag afterwards)
 name: hub
 
 on:
@@ -12,9 +13,15 @@ on:
   pull_request:
     paths: ["hub/**", ".github/workflows/hub.yml"]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: "X.Y.Z to publish as :X.Y.Z and :X.Y (set by release.yml)"
+        type: string
+        default: ""
 
 concurrency:
-  group: hub-${{ github.ref }}
+  group: hub-${{ github.ref }}-${{ inputs.version || 'ci' }}
   cancel-in-progress: true
 
 permissions:
@@ -64,8 +71,10 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},enable=${{ inputs.version == '' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ inputs.version == '' }}
+            type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
           labels: |
             org.opencontainers.image.title=ai-core-memory hub
             org.opencontainers.image.description=Self-hosted memory hub for AI assistants (FastAPI, SQLite, MCP, web UI)

@@ -40,8 +40,15 @@ or other secret is involved.
 
 ```bash
 docker pull ghcr.io/andyprosser/ai-core-memory-hub:latest   # or podman pull
-git tag v0.1.0 && git push origin v0.1.0                       # cut a versioned release image
+docker pull ghcr.io/andyprosser/ai-core-memory-hub:0.1.0    # a released version
 ```
+
+**Releasing.** The version lives in `hub/pyproject.toml` (and must match `acm_hub.__version__`; a test enforces it).
+To release, bump it and push to `main`: [`release.yml`](../.github/workflows/release.yml) skips if `vX.Y.Z` already
+exists, otherwise runs the whole hub workflow with that version (tests, smoke test, push `:X.Y.Z`, `:X.Y`, `:latest`),
+and only if that succeeds creates the `vX.Y.Z` tag and a GitHub Release with generated notes. A failed run leaves no tag
+behind, so fix and re-run. *Actions → release → Run workflow* releases the current version on demand. Pushing a
+`vX.Y.Z` tag by hand also still publishes the image, but creates no GitHub Release.
 
 Pin a version or `sha-…` tag in production rather than `latest`. **First publish:** GitHub creates the package as
 *private*. If you want to pull it without credentials, open the package under the repository's *Packages*, then
