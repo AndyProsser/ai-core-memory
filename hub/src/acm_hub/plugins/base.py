@@ -36,6 +36,13 @@ class PluginInfo(BaseModel):
     ] = []  # secrets the plugin needs; the operator maps each to an ENVIRONMENT VARIABLE NAME
     secret_help: dict[str, str] = {}
     default_events: list[str] = []  # events a new sink instance subscribes to (the operator can narrow)
+    # May a non-admin set this plugin up for themselves (Settings → Connections)? Only plugins whose own secrets and
+    # network use are safe under the connection rules (sealed secrets, public-only egress) say yes. Default: no.
+    personal_ok: bool = False
+    optional_secrets: list[str] = []  # secrets a connection may leave empty (everything else is required)
+    personal_help: dict[
+        str, str
+    ] = {}  # what to paste into each secret box when it is a connection (a value, not an env var name)
 
 
 @dataclass(frozen=True)
@@ -103,6 +110,11 @@ class BasePlugin:
 
     def validate(self, config: BaseModel) -> None:
         """Extra checks beyond the schema (e.g. a path must exist). Raise ValueError with a human message."""
+
+    def check(self, ctx: PluginContext) -> str:
+        """Connections: one small authenticated read proving the URL and token work. Return a short human message;
+        raise on failure (the message is shown to the person, with secrets scrubbed)."""
+        raise NotImplementedError
 
     def deliver(self, ctx: PluginContext, event: Event) -> DeliveryResult:  # sinks
         raise NotImplementedError

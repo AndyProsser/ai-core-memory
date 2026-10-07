@@ -54,7 +54,25 @@ class MemosPlugin(BasePlugin):
         secret_help={
             "token": "Environment variable holding a Memos access token (Settings → My Account → Access Tokens)."
         },
+        personal_ok=True,
+        personal_help={"token": "A Memos access token (Memos → Settings → My Account → Access Tokens)."},
     )
+
+    def check(self, ctx: PluginContext) -> str:
+        c: MemosConfig = ctx.config  # type: ignore[assignment]
+        token = ctx.secrets.get("token")
+        if not token:
+            raise RuntimeError("No access token is saved for this connection.")
+        r = ctx.http.get(
+            f"{c.base_url.rstrip('/')}/api/v1/memos",
+            params={"pageSize": 1},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        if r.status_code in (401, 403):
+            raise RuntimeError(f"Memos rejected the token (HTTP {r.status_code}).")
+        if r.status_code != 200:
+            raise RuntimeError(f"Memos returned HTTP {r.status_code} for /api/v1/memos")
+        return "Connected to Memos."
 
     def validate(self, config: BaseModel) -> None:
         c: MemosConfig = config  # type: ignore[assignment]

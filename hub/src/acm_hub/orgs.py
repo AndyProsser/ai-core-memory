@@ -153,6 +153,9 @@ def set_user_active(session: Session, actor, user: User, active: bool) -> None: 
         for inst in session.exec(select(PluginInstance).where(PluginInstance.owner_user_id == user.id)).all():
             inst.enabled = False
             session.add(inst)
+        from .connections import disable_all_for
+
+        disable_all_for(session, user.id)  # a person's connections stop and their sealed tokens are destroyed
     user.is_active = active
     session.add(user)
     session.flush()

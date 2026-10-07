@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf with context %}
+{% from "_settings_nav.html" import settings_tabs with context %}
+{% block title %}Connections{% endblock %}
+{% block content %}
+<header class="page">
+  <div><h1>Settings</h1><p class="muted">{{ user.email }}</p></div>
+</header>
+{{ settings_tabs('connections') }}
+<p class="muted">Connect your own notes apps and webhooks. Each connection uses <em>your</em> token, brings notes into <em>your</em> inbox, and only ever sees what you can see.</p>
+{% if not on %}<div class="warning small" role="status"><strong>Connections are switched off</strong> by an admin. Nothing below runs until they switch them back on.</div>{% endif %}
+<div class="warning small">
+  Your tokens are stored encrypted on the hub and never shown again (not to you, not to an admin). The hub can only reach public addresses unless the operator has allowed a private one. Anything a connection brings in lands in your inbox as <em>untrusted</em>, never straight into memory.
+</div>
+
+<section class="card panel">
+<h2>Your connections</h2>
+{% if rows %}
+<table>
+  <thead><tr><th>Name</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}{% set i = r.i %}
+  <tr>
+    <td><a href="/settings/connections/{{ i.id }}"><strong>{{ i.name }}</strong></a><div class="small muted">{{ r.plugin.info.name if r.plugin else i.plugin_key ~ ' (no longer available)' }}</div></td>
+    <td>
+      {% if i.enabled %}<span class="badge confirmed">on</span>{% else %}<span class="badge">off</span>{% endif %}
+      {% if i.last_status == 'error' %}<span class="badge stale">failing</span>{% elif i.last_status == 'ok' %}<span class="badge established">ok</span>{% endif %}
+      {% for s in r.secrets if s.unreadable %}<span class="badge stale">re-enter {{ s.label }}</span>{% endfor %}
+      <div class="small muted">{% if i.last_run_at %}last run {{ i.last_run_at|datetime }} UTC{% else %}never run{% endif %}</div>
+      {% if i.last_error %}<div class="small wrap">{{ i.last_error }}</div>{% endif %}
+    </td>
+    <td><form method="post" action="/settings/connections/{{ i.id }}/toggle">{{ csrf() }}<button type="submit">{{ 'Turn off' if i.enabled else 'Turn on' }}</button></form></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<div class="empty"><p><strong>No connections yet.</strong></p><p>Add one below.</p></div>{% endif %}
+</section>
+
+{% if on %}
+<section class="card panel">
+<h2>Add a connection</h2>
+{% if rows|length >= limit %}<p class="muted">You have {{ limit }} connections, the most allowed. Remove one to add another.</p>{% else %}
+{% for p in available %}
+<div class="entry">
+  <strong>{{ p.info.name }}</strong>
+  <span class="badge">{{ {'source': 'brings notes in', 'sink': 'sends events out', 'both': 'both ways'}[p.info.kind] }}</span>
+  <p class="desc">{{ p.info.description }}</p>
+  <a class="btn" href="/settings/connections/new?plugin={{ p.info.key }}">Add</a>
+</div>
+{% endfor %}{% endif %}
+</section>
+{% endif %}
+{% endblock %}

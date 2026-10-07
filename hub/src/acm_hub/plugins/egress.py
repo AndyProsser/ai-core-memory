@@ -89,6 +89,90 @@ def _pin_plaintext(url: str, kw: dict) -> tuple[str, dict]:
     return parts._replace(netloc=netloc).geturl(), {**kw, "headers": headers}
 
 
+# --- per-user connections: public targets only (docs/SECURITY.md § Per-user connections) ---------------------------
+
+_getaddrinfo = socket.getaddrinfo  # tests substitute a resolver; production never changes it
+
+
+def _private_allowlist() -> tuple[set[str], list[ipaddress.IPv4Network | ipaddress.IPv6Network]]:
+    """The operator's MEMORY_HUB_CONNECTION_PRIVATE_HOSTS: names (exact) and IPs/CIDRs."""
+    names: set[str] = set()
+    nets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for raw in (get_settings().connection_private_hosts or "").split(","):
+        item = raw.strip().lower()
+        if not item:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            names.add(item)
+    return names, nets
+
+
+def _unmap(ip: ipaddress.IPv4Address | ipaddress.IPv6Address):  # noqa: ANN202
+    return ip.ipv4_mapped if ip.version == 6 and ip.ipv4_mapped else ip
+
+
+def resolve_for_connection(host: str) -> tuple[list[str], bool]:
+    """Every address `host` resolves to, each checked; and whether the target is a (deliberately allowed) private one.
+
+    Public (globally routable) addresses pass. Anything else — loopback, RFC 1918, ULA, CGNAT, link-local, multicast,
+    unspecified — is refused unless the operator listed the host (by name, IP or CIDR); link-local (cloud metadata),
+    multicast and unspecified are refused regardless. One non-public answer refuses the name: all or nothing."""
+    names, nets = _private_allowlist()
+    if _is_ip_literal(host):
+        addrs = [host]
+    else:
+        try:
+            infos = _getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except (OSError, UnicodeError) as e:
+            raise EgressError(f"Couldn't resolve {host}.") from e
+        addrs = sorted({str(i[4][0]) for i in infos})
+    if not addrs:
+        raise EgressError(f"Couldn't resolve {host}.")
+    private = False
+    for a in addrs:
+        ip = _unmap(ipaddress.ip_address(a.split("%")[0]))
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+            raise EgressError(f"{host} resolves to an address connections may never reach.")
+        if ip.is_global:
+            continue
+        if host in names or any(ip in n for n in nets if n.version == ip.version):
+            private = True
+            continue
+        raise EgressError(
+            f"{host} is on a private network. Ask the operator to allow it in MEMORY_HUB_CONNECTION_PRIVATE_HOSTS."
+        )
+    return addrs, private
+
+
+def guard_connection_url(url: str, allowed_hosts: Iterable[str] = ()) -> tuple[str, dict, str]:
+    """Check a person-supplied URL and return (url pinned to the address we checked, extra request kwargs, host).
+
+    The name is resolved once and the connection goes to that exact address, with the original Host header and TLS
+    server name, so DNS can't change between the check and the request."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in {"http", "https"} or not host:
+        raise EgressError("Only http(s) URLs are allowed.")
+    if parts.username or parts.password:
+        raise EgressError("Put credentials in the token box, not in the URL.")
+    allow = [h.strip().lower() for h in allowed_hosts if h and h.strip()]
+    if allow and host not in allow and not any(host.endswith("." + h) for h in allow):
+        raise EgressError(f"{host} isn't in this instance's allowed hosts.")
+    addrs, private = resolve_for_connection(host)
+    if parts.scheme == "http" and not private:
+        raise EgressError(
+            "Use https for a public address; plain http is only for hosts the operator allowed."
+        )
+    ip = addrs[0]
+    netloc = (f"[{ip}]" if ":" in ip else ip) + (f":{parts.port}" if parts.port else "")
+    kw: dict = {"host_header": parts.netloc.rpartition("@")[2]}
+    if parts.scheme == "https":
+        kw["sni"] = host
+    return parts._replace(netloc=netloc).geturl(), kw, host
+
+
 def check_url(url: str, allowed_hosts: Iterable[str] = ()) -> str:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
@@ -105,12 +189,24 @@ def check_url(url: str, allowed_hosts: Iterable[str] = ()) -> str:
 class EgressClient:
     """A tiny, guarded HTTP client handed to plugins. No redirects (a redirect is a way around the host check)."""
 
-    def __init__(self, allowed_hosts: Iterable[str] = ()):
+    def __init__(self, allowed_hosts: Iterable[str] = (), *, connection: bool = False):
         self.allowed_hosts = list(allowed_hosts)
+        self.connection = (
+            connection  # a person's own URL: public addresses only, pinned (guard_connection_url)
+        )
 
     def request(self, method: str, url: str, **kw) -> httpx.Response:  # noqa: ANN003
-        check_url(url, self.allowed_hosts)
-        url, kw = _pin_plaintext(url, kw)
+        if self.connection:
+            url, extra, _host = guard_connection_url(url, self.allowed_hosts)
+            headers = httpx.Headers(kw.pop("headers", None))
+            if "host" not in headers:
+                headers["Host"] = extra["host_header"]
+            kw["headers"] = headers
+            if "sni" in extra:
+                kw["extensions"] = {"sni_hostname": extra["sni"]}
+        else:
+            check_url(url, self.allowed_hosts)
+            url, kw = _pin_plaintext(url, kw)
         t = kw.pop(
             "timeout", None
         )  # a caller with a tight budget (a search query) can ask for less, never more

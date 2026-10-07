@@ -161,6 +161,7 @@
     <div><label for="re">Ask “still true?” on established after (days)</label><input id="re" type="number" name="review_established_days" value="{{ inst.review_established_days }}" min="7" max="3650"></div>
   </div>
   <p><label class="inline"><input type="checkbox" name="auto_apply_proposals" value="1" {% if inst.auto_apply_proposals %}checked{% endif %}> Apply low-risk hub proposals automatically</label></p>
+  <p><label class="inline"><input type="checkbox" name="connections_enabled" value="1" {% if inst.connections_enabled %}checked{% endif %}> Let people connect their own notes apps and webhooks (Settings → Connections)</label></p>
   <p class="hint">Low-risk means hub-generated, touching only unreinforced <em>observed</em> records (merging duplicates, archiving). Anything involving confirmed or established records, scope, or core always waits for you. Unused observed records are marked stale automatically (reversible, logged) either way.</p>
   <p class="hint">Single sign-on: {{ 'configured' if oidc_enabled else 'not configured (set MEMORY_HUB_OIDC_* — see docs/DEPLOYMENT.md)' }}.</p>
   <div class="actions"><button type="submit">Save instance settings</button></div>

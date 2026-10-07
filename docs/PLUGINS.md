@@ -183,6 +183,57 @@ Ideas that fit the same interface without a new design: a `readwise`/`pocket` so
 `git` source that watches a notes repo, an `embeddings` plugin offering vector search
 over records, a `calendar` sink for review reminders.
 
+## Connections: plugins each person sets up for themselves
+
+A **system plugin** (everything above) is configured by an admin, names environment variables for its secrets, and
+serves the instance. A **connection** is the same plugin machinery used the other way round: a person connects *their*
+notes app or *their* webhook from **Settings → Connections**, pastes *their* API token into a form, and nothing needs
+the operator, a restart, or an environment variable.
+
+| Level | Who sets it up | Secrets | Sees / captures | Plugins |
+| --- | --- | --- | --- | --- |
+| **System** | admin (Settings → Plugins) | environment variable *names* | what the admin allows | all built-ins, third-party, remote services |
+| **Connection** | any signed-in user, for themselves | the user's own values, sealed in the database | only what *that user* may read; captures only into *that user's* inbox | `memos`, `joplin`, `obsidian-rest`, `webhook` |
+
+- **Notifications are system-level.** `apprise` (Slack, Teams, ntfy, email, …) is admin-only: a channel belongs to the
+  team, not to one person's token, and it can reach places a person's own webhook shouldn't.
+- **Webhooks are both.** The admin's webhook sends system events; a person's webhook sends only events about records
+  *they* can read (their own user-scope memory, projects and teams they belong to) and nothing scope-less about the
+  system (a failing system plugin, say) ever reaches it.
+- **Notes apps are connections.** The `obsidian` *vault-folder* source stays a system plugin (an operator mounting a
+  synced folder). `obsidian-rest` is its per-user sibling.
+
+### Connectors
+
+| Connector | Needs from you | What it does |
+| --- | --- | --- |
+| `memos` | Memos URL, access token (Memos → Settings → My Account → Access Tokens) | Pulls memos with a tag (default `#memory`) into your inbox; optionally posts your weekly digest back as a *private* memo. |
+| `joplin` | URL of Joplin's Web Clipper service (Joplin desktop → Options → Web Clipper), its token | Pulls notes (optionally by tag) into your inbox. Links back with `joplin://` so a captured item opens the note. |
+| `obsidian-rest` | URL of the **Local REST API** community plugin in your vault, its API key; optional vault name | Pulls notes from a folder (default `Inbox`) and/or with a tag into your inbox. |
+| `webhook` | URL (a secret: URLs often embed tokens), optional signing key | Signed JSON POST of your events. |
+
+Honest limits: Joplin and Obsidian are **desktop apps**, so these connectors only work while the app is open and its
+address is reachable from the hub (same LAN, a VPN/tailnet). Joplin's API authenticates with a token in the query
+string, so it is redacted from every log and error. Obsidian's Local REST API serves HTTPS with a *self-signed*
+certificate by default; the hub does **not** disable certificate checks, so enable the plugin's plain-HTTP port and
+reach it over a trusted network the operator has allowed (below), or put a trusted certificate on it. Memos and
+Joplin are written against their documented APIs and tested against mocks of that shape, not every release; **Test
+connection** reports exactly what the server answered.
+
+### How a connection runs
+
+1. **Add** (the form is generated from the connector's config schema; secrets are password fields) → the
+   connection is created **off**. **Test connection** makes one small authenticated read and reports the result.
+   **Turn on** starts the schedule (default every 60 minutes, never faster than 15). **Pull now** runs it immediately.
+2. **Edit** shows secrets as *set* / *not set*, never their value; leave a secret box blank to keep it, type a new
+   one to replace it. **Remove** deletes the connection *and its sealed secrets*; items already captured stay in your inbox.
+3. Captured items are ordinary inbox items marked `plugin:<connector>` and untrusted, exactly as for system sources:
+   they never auto-promote, and the dream cycle and the proposal gate still decide what becomes memory.
+4. A connection can capture into your inbox at `user` scope or a **project you can write to** (checked when
+   saved *and* on every pull; if your access is removed the pull stops with an error). Never `team`.
+5. The admin sees that connections exist (a count on Settings → Plugins) and can turn the whole feature off, or
+   disable one with `acm plugins disable`, but cannot read anyone's secrets: nothing in the product ever displays them.
+
 ## Remote (out-of-process) plugins
 
 An in-process plugin is trusted code running inside the hub: it shares the hub's memory, environment and database

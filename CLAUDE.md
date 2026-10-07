@@ -49,7 +49,7 @@ are load-bearing for everything else in the repo.
 
 ## Scope of changes
 
-Phases 1–6 of the hub are built (core, lifecycle/consolidation, plugins, teams + distribution, hardening + MCP OAuth, remote plugins + search plugin + encrypted private memory) (see ARCHITECTURE.md → Roadmap for what is and isn't). Don't
+Phases 1–7 of the hub are built (core, lifecycle/consolidation, plugins, teams + distribution, hardening + MCP OAuth, remote plugins + search plugin + encrypted private memory, per-user connections) (see ARCHITECTURE.md → Roadmap for what is and isn't). Don't
 start on later roadmap items (Postgres, DEK rotation, encrypting team/project memory, …)
 unless explicitly asked — "the design is decided" and "go build it" are separate asks. When
 working in `hub/`, run `pip install -e '.[dev]'` and `pytest` there; every change needs

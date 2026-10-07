@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf with context %}
+{% from "_settings_nav.html" import settings_tabs with context %}
+{% block title %}{{ inst.name }}{% endblock %}
+{% block content %}
+<header class="page"><div><h1>{{ 'Add: ' ~ plugin.info.name if mode == 'new' else inst.name }}</h1>
+  <p class="muted">{{ plugin.info.description }} <a href="/settings/connections">← All connections</a></p></div></header>
+{% for e in errors %}<div class="error" role="alert">{{ e }}</div>{% endfor %}
+
+<form method="post" action="{{ '/settings/connections' if mode == 'new' else '/settings/connections/' ~ inst.id }}" class="card" autocomplete="off">
+  {{ csrf() }}{% if mode == 'new' %}<input type="hidden" name="plugin" value="{{ plugin.info.key }}">{% endif %}
+  <div class="row">
+    <div><label for="name">Name</label><input id="name" type="text" name="name" value="{{ inst.name }}" maxlength="80" required></div>
+    <div class="shrink"><label class="inline spaced"><input type="checkbox" name="enabled" {% if inst.enabled %}checked{% endif %}> Turned on</label></div>
+  </div>
+
+  {% if fields %}<h3>Settings</h3>
+  <div class="row">{% for f in fields if f.name != 'allowed_hosts' %}
+    <div>
+      <label for="cfg_{{ f.name }}">{{ f.label }}{% if not f.required %} <span class="muted">(optional)</span>{% endif %}</label>
+      {% if f.kind == 'bool' %}<label class="inline"><input type="checkbox" id="cfg_{{ f.name }}" name="cfg_{{ f.name }}" {% if f.value %}checked{% endif %}> Yes</label>
+      {% elif f.kind == 'select' %}<select id="cfg_{{ f.name }}" name="cfg_{{ f.name }}">{% for o in f.options if not (f.name == 'inbox_scope' and o == 'team') %}<option value="{{ o }}" {% if o == f.value %}selected{% endif %}>{{ o }}</option>{% endfor %}</select>
+      {% elif f.kind == 'number' %}<input id="cfg_{{ f.name }}" type="number" name="cfg_{{ f.name }}" value="{{ f.value }}">
+      {% else %}<input id="cfg_{{ f.name }}" type="text" name="cfg_{{ f.name }}" value="{{ f.value }}">{% endif %}
+      {% if f.help %}<p class="hint">{{ f.help }}</p>{% endif %}
+    </div>{% endfor %}
+  </div>{% endif %}
+
+  {% if secrets %}<h3>Your {{ 'credentials' if secrets|length > 1 else 'credential' }}</h3>
+  <p class="hint">Stored encrypted and never shown again. {% if mode == 'edit' %}Leave a box empty to keep what is saved; type to replace it.{% endif %}</p>
+  {% for s in secrets %}
+    <label for="secret_{{ s.name }}">{{ s.label }}{% if s.optional %} <span class="muted">(optional)</span>{% endif %}</label>
+    <input id="secret_{{ s.name }}" type="password" name="secret_{{ s.name }}" value="" autocomplete="new-password" spellcheck="false" placeholder="{{ 'saved — type to replace' if s.is_set else '' }}">
+    <p class="hint">{{ s.help }} {% if s.is_set %}<span class="badge established">saved</span>{% elif s.unreadable %}<span class="badge stale">saved but unreadable — re-enter it</span>{% elif mode == 'edit' %}<span class="badge stale">not saved</span>{% endif %}</p>
+  {% endfor %}{% endif %}
+
+  {% if is_sink %}<h3>What it may send</h3>
+  <p class="hint">Only about things you can read. Nothing is sent unless you tick it. Events carry names, types and a link back here — not the text of a memory — unless you choose “full text”.</p>
+  <div><span class="small"><strong>Scopes</strong></span>
+    {% for s, l in [('project', 'Project memory'), ('team', 'Team memory'), ('user', 'My personal memory')] %}
+    <label class="inline spaced"><input type="checkbox" name="scopes" value="{{ s }}" {% if s in inst.scopes %}checked{% endif %}> {{ l }}</label>&nbsp;{% endfor %}
+  </div>
+  <label class="inline spaced"><input type="checkbox" name="user_scope_ack" {% if inst.user_scope_ack %}checked{% endif %}> I understand this destination will receive notices about my personal memory</label>
+  <div class="row"><div><label for="egress">Detail</label><select id="egress" name="egress"><option value="metadata" {% if inst.egress == 'metadata' %}selected{% endif %}>Titles and links only (recommended)</option><option value="full" {% if inst.egress == 'full' %}selected{% endif %}>Full text of memories</option></select></div></div>
+  <span class="small"><strong>Send me when…</strong></span>
+  <div>{% for e in all_events %}<label class="inline spaced"><input type="checkbox" name="events" value="{{ e }}" {% if e in inst.events %}checked{% endif %}> {{ labels[e] }}</label><br>{% endfor %}</div>
+  {% endif %}
+
+  {% if is_source %}<h3>Schedule</h3>
+  <div class="row"><div><label for="pull_interval_minutes">Check every (minutes)</label><input id="pull_interval_minutes" type="number" name="pull_interval_minutes" value="{{ inst.pull_interval_minutes }}" min="{{ min_interval }}" max="10080"></div></div>
+  <p class="hint">Captured notes go to your inbox for review, marked as coming from outside. They are never turned into memory automatically.</p>
+  {% endif %}
+
+  <div class="actions"><button class="primary" type="submit">{{ 'Add connection' if mode == 'new' else 'Save' }}</button><a class="btn" href="/settings/connections">Cancel</a></div>
+</form>
+
+{% if mode == 'edit' %}
+<h2>Actions</h2>
+<div class="actions">
+  <form method="post" action="/settings/connections/{{ inst.id }}/test">{{ csrf() }}<button type="submit">Test connection</button></form>
+  {% if is_source %}<form method="post" action="/settings/connections/{{ inst.id }}/pull">{{ csrf() }}<button type="submit">Pull now</button></form>{% endif %}
+  <form method="post" action="/settings/connections/{{ inst.id }}/delete">{{ csrf() }}<button class="danger" type="submit">Remove</button></form>
+</div>
+<h2>Status</h2>
+<p>{% if inst.last_status == 'error' %}<span class="badge stale">failing</span> {{ inst.last_error }} <span class="muted">({{ inst.consecutive_failures }} in a row)</span>
+   {% elif inst.last_status == 'ok' %}<span class="badge established">ok</span> last run {{ inst.last_run_at|datetime }} UTC{% else %}Hasn't run yet.{% endif %}</p>
+{% endif %}
+{% endblock %}

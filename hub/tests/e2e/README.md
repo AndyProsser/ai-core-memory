@@ -20,3 +20,5 @@ ACM_E2E_URL=... ACM_E2E_EMAIL=... ACM_E2E_PASSWORD=... python tests/e2e/encrypte
   rotates the refresh token, and checks that replaying the old one ends the grant. Use a throwaway hub.
 - `encrypted_memory.py` enables encrypted private memory from Settings, checks the recovery key appears once, that locking,
   a wrong passphrase and the right one behave as described, and fails on any 403/422/500. Use a throwaway hub.
+- `connections.py` adds a Memos connection through Settings → Connections, checks the token never appears in any page, that
+  Test connection reports a result, that a loopback address is refused, and that Remove destroys the saved token. Use a throwaway hub.

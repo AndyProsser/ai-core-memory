@@ -7,6 +7,7 @@ def install(app: FastAPI) -> None:
     from . import (
         routes_api,
         routes_auth,
+        routes_connections,
         routes_data,
         routes_keys,
         routes_memory,
@@ -22,6 +23,7 @@ def install(app: FastAPI) -> None:
     for module in (
         routes_api,
         routes_auth,
+        routes_connections,
         routes_memory,
         routes_review,
         routes_data,

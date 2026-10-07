@@ -24,6 +24,8 @@ data:
   # Let plugins use plain http to in-cluster Service names (every DNS answer must be private; the connection is pinned
   # to the checked IP). Off by default; https targets never need it. See docs/SECURITY.md § Plugins and egress.
   MEMORY_HUB_EGRESS_RESOLVE_PRIVATE: "false"
+  # Private hosts people's own connections (Settings → Connections) may reach: names, IPs or CIDRs. Empty = public only.
+  MEMORY_HUB_CONNECTION_PRIVATE_HOSTS: ""
   # Let Claude.ai connectors sign in (MCP OAuth). Needs the https PUBLIC_URL above and an ingress that forwards
   # /.well-known/*, /authorize, /token, /register, /revoke and /oauth/consent. See docs/SECURITY.md § MCP OAuth.
   MEMORY_HUB_OAUTH_ENABLED: "false"

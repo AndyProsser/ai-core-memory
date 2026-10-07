@@ -742,6 +742,13 @@ Sequenced as phases; each phase is usable on its own. Self-host first throughout
       excluded from FTS bodies, plugins, search sync, exports, consolidation and `acm compile`. Not end-to-end:
       names/descriptions/topics stay plaintext and a compromised running hub sees plaintext (SECURITY.md)
 
+**Phase 7 — per-user connections** (built)
+
+- [x] 7a — Connections: any person connects their own notes app or webhook from Settings → Connections, with their own
+      token sealed in the database (not an environment variable), an SSRF-guarded egress policy, strict per-owner
+      isolation, and an admin on/off switch. Notifications (Apprise) stay system-level; webhooks exist at both levels
+- [x] 7b — Connectors: Memos (refactored), Joplin, Obsidian Local REST API (see PLUGINS.md § Connections)
+
 **Later / optional**
 
 - [ ] Reference implementation of the dream pipeline outside a single chat session

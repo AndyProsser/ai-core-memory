@@ -56,6 +56,10 @@
 </div>
 {% endfor %}
 </section>
+<section class="card panel">
+<h2>People's own connections</h2>
+<p class="muted small">{{ connection_count }} connection{{ '' if connection_count == 1 else 's' }} set up by people for themselves (Memos, Joplin, Obsidian, webhooks). They are theirs: you can't open them or see their tokens. {% if connections_on %}Turn the feature off for everyone under <em>Instance</em> in Account settings; to stop one, use <code>acm plugins disable &lt;id&gt;</code>.{% else %}<strong>Connections are switched off</strong> for everyone; none of them run.{% endif %}</p>
+</section>
 {% if services or remote_errors %}
 <section class="card panel">
 <h2>Remote plugin services</h2>

@@ -17,12 +17,14 @@ from pydantic import ValidationError
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, delete, select
 
+from . import connection_secrets
 from . import events as ev_mod
-from .access import principal_for_user
+from .access import principal_for_user, writable_project_ids
 from .config import get_settings
 from .models import (
     Event,
     InboxItem,
+    InstanceSettings,
     MemoryRecord,
     PluginDelivery,
     PluginInstance,
@@ -53,13 +55,33 @@ _rate = SlidingWindowLimiter(60)  # deliveries per instance per minute
 # --- context ------------------------------------------------------------------------------------------------
 
 
+def blocked_reason(session: Session, inst: PluginInstance) -> str | None:
+    """Why a connection must not run right now (the admin switched connections off, or its owner is deactivated)."""
+    if not inst.personal:
+        return None
+    if not (session.get(InstanceSettings, 1) or InstanceSettings()).connections_enabled:
+        return "connections are switched off for this hub"
+    owner = session.get(User, inst.owner_user_id)
+    if owner is None or not owner.is_active:
+        return "its owner is deactivated"
+    return None
+
+
 class PluginConfigError(Exception):
     pass
 
 
 def resolve_secrets(plugin: BasePlugin, inst: PluginInstance) -> dict[str, str]:
-    """Values come from the environment at call time and live only in this dict; the database holds env var *names*."""
+    """A system plugin's values come from the environment at call time and live only in this dict; the database holds
+    env var *names*. A connection's come from its own sealed secrets and *never* from the environment: otherwise a
+    person could name any variable (MEMORY_HUB_SECRET_KEY) and have the hub send it to a server of their choosing."""
     out = {}
+    if inst.personal:
+        for name in plugin.info.secret_names:
+            sealed = (inst.sealed_secrets or {}).get(name)
+            if sealed and (value := connection_secrets.open_(inst.id, name, sealed)):
+                out[name] = value
+        return out
     for name in plugin.info.secret_names:
         env = (inst.secret_refs or {}).get(name)
         if env and os.environ.get(env):
@@ -86,7 +108,7 @@ def build_context(
         scopes=frozenset(inst.scopes or []),
         egress=inst.egress,
         log=redacting_logger(f"acm_hub.plugin.{inst.plugin_key}", secrets),
-        http=EgressClient(allowed),
+        http=EgressClient(allowed, connection=inst.personal),
         public_url=get_settings().public_url,
         inbox=inbox,
     )
@@ -162,7 +184,11 @@ def fan_out(session: Session, *, limit: int = 500, now: datetime | None = None) 
     ).all()  # type: ignore[union-attr]
     if not pending:
         return 0
-    instances = session.exec(select(PluginInstance).where(PluginInstance.enabled == True)).all()  # noqa: E712
+    instances = [
+        i
+        for i in session.exec(select(PluginInstance).where(PluginInstance.enabled == True)).all()  # noqa: E712
+        if blocked_reason(session, i) is None
+    ]
     vis = ev_mod.Visibility(session)
     n = 0
     for ev in pending:
@@ -182,6 +208,8 @@ def fan_out(session: Session, *, limit: int = 500, now: datetime | None = None) 
 
 
 def _attempt(session: Session, inst: PluginInstance, ev: Event) -> DeliveryResult:
+    if (why := blocked_reason(session, inst)) is not None:
+        return DeliveryResult.failed(why)
     plugin = registry.get(inst.plugin_key)
     if plugin is None:
         if (why := remote.unavailable_reason(inst.plugin_key)) is not None:
@@ -305,6 +333,32 @@ def dispatch_once(engine: Engine, *, now: datetime | None = None) -> DispatchSta
     return stats
 
 
+def check_instance(engine: Engine, instance_id: str) -> tuple[bool, str]:
+    """ "Test connection": one small authenticated read (sources) or a test event (sinks). Never throws; the message
+    is safe to show the person (secret values scrubbed)."""
+    with Session(engine) as s:
+        inst = s.get(PluginInstance, instance_id)
+        plugin = registry.get(inst.plugin_key) if inst else None
+        if inst is None or plugin is None:
+            return False, "That connector isn't available."
+        if (why := blocked_reason(s, inst)) is not None:
+            return False, f"Not run: {why}."
+    if plugin.info.kind in {"sink", "both"}:
+        res = deliver_test_event(engine, instance_id)
+        return res.ok, res.message or ("Test event sent." if res.ok else "The test failed.")
+    with Session(engine) as s:
+        inst = s.get(PluginInstance, instance_id)
+        secrets: list[str] = []
+        try:
+            ctx = build_context(inst, plugin)
+            secrets = list(ctx.secrets.values())
+            return True, str(_call(lambda: plugin.check(ctx), CALL_TIMEOUT))
+        except NotImplementedError:
+            return True, "Saved. This connector has no connection test."
+        except Exception as e:  # noqa: BLE001
+            return False, redact(f"{e}" or type(e).__name__, secrets)
+
+
 def deliver_test_event(engine: Engine, instance_id: str) -> DeliveryResult:
     """Send a test event to one instance right now (the Plugins screen's button) and report exactly what happened."""
     with Session(engine) as s:
@@ -339,7 +393,7 @@ class PullResult:
 
 def _inbox_adder(engine: Engine, inst: PluginInstance, counter: list[int]):  # noqa: ANN202
     owner, key, cfg = inst.owner_user_id, inst.plugin_key, dict(inst.config or {})
-    inst_id = inst.id
+    inst_id, personal = inst.id, inst.personal
 
     def add(title: str, body: str, external_ref: str | None) -> bool:
         title = (title or "").strip()[:200]
@@ -355,6 +409,15 @@ def _inbox_adder(engine: Engine, inst: PluginInstance, counter: list[int]):  # n
             )
             if scope == "project" and proj is None:
                 raise ValueError("inbox_scope is 'project' but inbox_project doesn't exist")
+            if personal:
+                # A connection captures into its owner's own inbox: personal, or a project the owner can still write to.
+                owner_user = s.get(User, owner)
+                if scope not in {"user", "project"} or owner_user is None or not owner_user.is_active:
+                    raise ValueError("a connection can only capture at user or project scope")
+                if scope == "project" and proj.id not in writable_project_ids(
+                    s, principal_for_user(s, owner_user)
+                ):
+                    raise ValueError(f"you no longer have write access to project {proj.slug!r}")
             if external_ref:
                 prior = s.exec(
                     select(InboxItem).where(
@@ -399,6 +462,8 @@ def run_pull(engine: Engine, instance_id: str) -> PullResult:
             return PullResult(error=err)
         if inst is None or plugin is None or plugin.info.kind not in {"source", "both"}:
             return PullResult(error="Not a source plugin instance.")
+        if (why := blocked_reason(s, inst)) is not None:
+            return PullResult(error=f"Not run: {why}.")
         counter = [0]
         try:
             ctx = build_context(inst, plugin, inbox=InboxWriter(_inbox_adder(engine, inst, counter)))
@@ -427,7 +492,7 @@ def pulls_due(engine: Engine, now: datetime | None = None) -> list[str]:
     with Session(engine) as s:
         for inst in s.exec(select(PluginInstance).where(PluginInstance.enabled == True)).all():  # noqa: E712
             p = registry.get(inst.plugin_key)
-            if p is None or p.info.kind not in {"source", "both"}:
+            if p is None or p.info.kind not in {"source", "both"} or blocked_reason(s, inst) is not None:
                 continue
             if inst.last_run_at is None or now - inst.last_run_at >= timedelta(
                 minutes=max(inst.pull_interval_minutes, 5)
@@ -493,7 +558,11 @@ def digests_due(engine: Engine, now: datetime | None = None) -> list[str]:
     with Session(engine) as s:
         for inst in s.exec(select(PluginInstance).where(PluginInstance.enabled == True)).all():  # noqa: E712
             wants = "digest.weekly" in (inst.events or []) or bool((inst.config or {}).get("export_digest"))
-            if wants and now - (inst.last_digest_at or inst.created_at) >= DIGEST_EVERY:
+            if (
+                wants
+                and blocked_reason(s, inst) is None
+                and now - (inst.last_digest_at or inst.created_at) >= DIGEST_EVERY
+            ):
                 out.append(inst.id)
     return out
 
@@ -503,7 +572,7 @@ def send_digest(engine: Engine, instance_id: str, now: datetime | None = None) -
     with Session(engine) as s:
         inst = s.get(PluginInstance, instance_id)
         plugin = registry.get(inst.plugin_key) if inst else None
-        if inst is None or plugin is None:
+        if inst is None or plugin is None or blocked_reason(s, inst) is not None:
             return False
         digest = build_digest(s, inst, now)
         if "digest.weekly" in (inst.events or []) and plugin.info.kind in {"sink", "both"}:

@@ -144,6 +144,11 @@ panel (`<section class="card panel">`); a test enforces that every `<h2>` opens 
   90 days), shown **once** in a copy box with a ready-to-paste `claude mcp add …` line
   and an `.mcp.json` snippet; list with prefix, scope, last used, expiry; **Revoke**
   (immediate). See [SECURITY.md](SECURITY.md#api-tokens-minimizing-the-blast-radius-of-a-leak).
+- **Connections** — everyone: your own notes apps and webhooks (Memos, Joplin, Obsidian Local REST API, webhook). A list
+  with status, last pull and last error; **Add** (choose a connector, fill the generated form, tokens in password boxes),
+  then **Test connection**, **Turn on**, **Pull now**, **Remove**. Secrets show as *set* / *not set* and are never
+  displayed; leave a box blank to keep it. When an admin has turned connections off the tab says so. Admins see a count
+  on the Plugins screen, not the contents.
 - **Projects** — everyone: projects you can see, with visibility (`private`/`team`/`public`, limited to what
   the deployment mode allows) and owning team. Controls appear only where you may use them (a project's owner,
   or a team's owners). Deleting asks you to type the project's name and, if it holds archived records, tick a
@@ -159,7 +164,7 @@ panel (`<section class="card panel">`); a test enforces that every `<h2>` opens 
 - **Users** _(admin)_ — create accounts (local password or SSO invite), deactivate/reactivate, grant or remove
   admin, reset a local password (shown once). Deactivation signs the person out and revokes their tokens.
 
-Settings is a tab row — Account · Projects · Teams · Users · Plugins — showing only what your role and the
+Settings is a tab row — Account · Connections · Projects · Teams · Users · Plugins — showing only what your role and the
 deployment mode allow.
 - **Plugins** _(admin; built in Phase 3, reached from Settings)_ — a list of configured instances with
   on/off, last status and what each can see (nothing / which scopes / full text / personal memory are

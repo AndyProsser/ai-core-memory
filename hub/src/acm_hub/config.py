@@ -80,6 +80,11 @@ class Settings:
     egress_resolve_private: bool = field(
         default_factory=lambda: _bool("MEMORY_HUB_EGRESS_RESOLVE_PRIVATE", False)
     )
+    # Per-user connections (docs/SECURITY.md § Per-user connections) may only reach PUBLIC addresses. Private targets the
+    # operator deliberately allows (a LAN Memos, a cluster Service, a tailnet host): comma separated names, IPs or CIDRs.
+    connection_private_hosts: str = field(
+        default_factory=lambda: os.environ.get("MEMORY_HUB_CONNECTION_PRIVATE_HOSTS", "")
+    )
     # OIDC (optional). All three of issuer/client id/secret enable it.
     oidc_issuer: str = field(default_factory=lambda: os.environ.get("MEMORY_HUB_OIDC_ISSUER", "").rstrip("/"))
     oidc_client_id: str = field(default_factory=lambda: os.environ.get("MEMORY_HUB_OIDC_CLIENT_ID", ""))

@@ -35,6 +35,12 @@ class WebhookPlugin(BasePlugin):
             "signing_key": "Environment variable holding the HMAC signing key (optional but recommended).",
         },
         default_events=["proposal.pending", "conflict.flagged", "digest.weekly", "plugin.failed"],
+        personal_ok=True,
+        optional_secrets=["signing_key"],
+        personal_help={
+            "url": "The URL to POST to (it is stored sealed and never shown again).",
+            "signing_key": "Optional: a secret you choose; each request carries an HMAC-SHA256 of its body in X-ACM-Signature.",
+        },
     )
 
     def deliver(self, ctx: PluginContext, event: Event) -> DeliveryResult:

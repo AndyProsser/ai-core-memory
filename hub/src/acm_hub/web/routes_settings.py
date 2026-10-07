@@ -174,6 +174,7 @@ def update_instance(
     stale_after_days_confirmed: int = Form(365),
     review_established_days: int = Form(365),
     auto_apply_proposals: str = Form(""),
+    connections_enabled: str = Form(""),
     ctx: Ctx = Depends(user_csrf),
 ) -> RedirectResponse:
     if not ctx.user.is_admin:
@@ -196,6 +197,7 @@ def update_instance(
     inst.stale_after_days_confirmed = stale_after_days_confirmed
     inst.review_established_days = review_established_days
     inst.auto_apply_proposals = bool(auto_apply_proposals)
+    inst.connections_enabled = bool(connections_enabled)
     inst.deployment_mode = deployment_mode
     inst.core_token_budget = core_token_budget
     inst.default_token_expiry_days = default_token_expiry_days

@@ -448,6 +448,37 @@ to the wrong Slack channel can't be un-posted.
   checked (with the original `Host` header), so DNS that changes between the check and the request
   can't redirect plaintext traffic to a public host. Link-local addresses (cloud metadata) are excluded from plaintext targets altogether. Trade-off when enabled: whoever controls the
   hub's DNS decides what counts as "private" — appropriate when that's your own cluster/LAN resolver.
+- **Per-user connections** ([PLUGINS.md § Connections](PLUGINS.md#connections-plugins-each-person-sets-up-for-themselves))
+  let a *non-admin* make the hub call a URL *they* chose, with a credential *they* typed. That needs more than the
+  rules above, and each rule below has a test that fails if it is removed:
+  - **Credentials are sealed, not referenced.** A person's tokens are stored as AES-256-GCM ciphertext under a key
+    derived (HKDF, own context label) from `MEMORY_HUB_SECRET_KEY`, with the connection id and secret name bound in as
+    associated data, so a sealed value can't be moved to another connection or field. A copy of the database or a
+    backup alone is therefore not enough to use them; the database *plus* the hub's environment is. This is the one
+    deliberate exception to "never in the database", it applies only to connections, and system plugins still use
+    environment-variable names. **Changing `MEMORY_HUB_SECRET_KEY` makes every sealed secret unreadable** (the
+    connection then says "re-enter your token"); it does not corrupt anything else.
+  - **Write-only.** No page, API, export, log or error message ever shows a stored secret; the form shows *set* /
+    *not set*. Errors and logs are scrubbed of the secret values (and of the query-string token some APIs require).
+  - **Connections can't name environment variables.** A system plugin's `secret_refs` are operator-chosen; on a
+    connection they are ignored, so a person can never make the hub send `MEMORY_HUB_SECRET_KEY` (or any variable) to
+    a server of their choosing.
+  - **SSRF guard.** A person's URL must resolve to **public** addresses only. Loopback, private (RFC 1918 / ULA),
+    link-local (cloud metadata), multicast and unspecified addresses are refused for both http and https. The hub
+    resolves the name once, checks every answer, and then connects to *that* address (with the original `Host` header
+    and TLS server name), so DNS can't change between the check and the request. No redirects. Responses are
+    size-capped. To reach a Memos on your LAN or in your cluster, the **operator** lists the host (name, IP or CIDR)
+    in `MEMORY_HUB_CONNECTION_PRIVATE_HOSTS`; only those private targets are then reachable by connections, and
+    link-local/metadata addresses never are.
+  - **Own data only.** A connection's owner is fixed at creation. Other users get "not found" for it (admins too:
+    they can disable it, not open or edit it). It captures into its owner's inbox, its events are filtered by what its
+    owner can read, and scope-less system events never reach it. Deactivating the owner turns it off and destroys its secrets.
+  - **Bounded.** At most 10 connections per person, a 15-minute minimum pull interval, the same per-call
+    timeouts, response caps and retry limits as every plugin, and an admin switch that disables connections
+    instance-wide.
+  - **Only connector types the operator allows.** A connection can only use a plugin that declares itself safe
+    for that (`personal_ok`): never `apprise`, never the vault-folder source, never a third-party or remote plugin
+    unless its own definition says so.
 - **Auditable.** Every delivery and every inbound pull is recorded (`plugin_deliveries`,
   last status/error on the instance) and visible in the Plugins screen. (Source plugins only add inbox
   items, so there are no `plugin`-sourced revisions to audit; what they capture is marked `plugin:<key>`.)

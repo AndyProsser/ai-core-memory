@@ -34,6 +34,9 @@ class InstanceSettings(SQLModel, table=True):
         default=False, sa_column_kwargs={"server_default": "0"}
     )  # observed-only, low-risk kinds
     last_consolidation_at: NaiveDatetime | None = None
+    connections_enabled: bool = Field(
+        default=True, sa_column_kwargs={"server_default": "1"}
+    )  # may people connect their own notes apps / webhooks (Settings → Connections)?
 
 
 class User(SQLModel, table=True):
@@ -253,6 +256,12 @@ class PluginInstance(SQLModel, table=True):
     last_error: str | None = None
     consecutive_failures: int = 0
     last_digest_at: NaiveDatetime | None = None
+    # A per-user connection (docs/PLUGINS.md § Connections): owned and managed by `owner_user_id`, whose own secret values
+    # live sealed in `sealed_secrets` ({secret name: ciphertext}); `secret_refs` is ignored for these.
+    personal: bool = Field(default=False, sa_column_kwargs={"server_default": "0"}, index=True)
+    sealed_secrets: dict = Field(
+        default_factory=dict, sa_column=Column(JSON, nullable=False, server_default="{}")
+    )
 
 
 class Event(SQLModel, table=True):

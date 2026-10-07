@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import col, select
 
-from .. import dispatcher, search_sync
+from .. import connections, dispatcher, search_sync
 from .. import plugin_admin as pa
 from ..access import AccessError, NotFound
 from ..models import Event, PluginDelivery, PluginInstance, Project
@@ -52,7 +52,11 @@ def _secret_status(plugin, inst: PluginInstance) -> list[dict]:  # noqa: ANN001
 @router.get("/plugins")
 def plugins_list(request: Request, ctx: Ctx = Depends(require_user)):  # noqa: ANN201
     _admin(ctx)
-    instances = ctx.db.exec(select(PluginInstance).order_by(col(PluginInstance.created_at))).all()
+    instances = ctx.db.exec(
+        select(PluginInstance)
+        .where(PluginInstance.personal == False)  # noqa: E712 — people's own connections aren't the admin's to open
+        .order_by(col(PluginInstance.created_at))
+    ).all()
     rows = []
     for i in instances:
         p = registry.get(i.plugin_key)
@@ -76,6 +80,8 @@ def plugins_list(request: Request, ctx: Ctx = Depends(require_user)):  # noqa: A
         available=registry.all_plugins(),
         services=services,
         remote_errors=list(remote.CONFIG_ERRORS),
+        connection_count=connections.count_all(ctx.db),
+        connections_on=connections.enabled(ctx.db),
     )
 
 
@@ -150,7 +156,9 @@ async def plugin_create(request: Request, ctx: Ctx = Depends(user_csrf)):  # noq
 
 def _get(ctx: Ctx, iid: str) -> PluginInstance:
     inst = ctx.db.get(PluginInstance, iid)
-    if inst is None:
+    if (
+        inst is None or inst.personal
+    ):  # a person's connection is theirs: an admin can't open, edit or redirect it
         raise NotFound("No such plugin instance.")
     return inst
 

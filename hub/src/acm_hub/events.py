@@ -151,6 +151,10 @@ def instance_allows(
     if (
         scope is None
     ):  # scope-less events carry no memory content (plugin.failed, ...); owner-tagged ones stay with their owner
+        if (
+            inst.personal
+        ):  # a person's own webhook never receives system-level events, only ones about its owner
+            return owner_user_id is not None and owner_user_id == inst.owner_user_id
         return owner_user_id is None or owner_user_id == inst.owner_user_id
     if scope not in (inst.scopes or []):
         return False
