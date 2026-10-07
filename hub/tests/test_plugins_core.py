@@ -46,7 +46,9 @@ class Hang(BasePlugin):
     info = PluginInfo(key="hang", name="Hang", kind="sink", config_schema=Empty)
 
     def deliver(self, ctx, event):
-        time.sleep(1.0)
+        time.sleep(
+            3.0
+        )  # far longer than CALL_TIMEOUT (0.2s) and than any scheduling jitter on a loaded runner
         return DeliveryResult.success()
 
 
@@ -329,7 +331,9 @@ def test_timeouts_count_as_failures_without_blocking(db, human, user, monkeypatc
     mk(db, human)
     t0 = time.monotonic()
     stats = dp.dispatch_once(db.get_bind())
-    assert stats.retried == 1 and time.monotonic() - t0 < 0.9
+    # Returned long before the plugin's 3s sleep ended: the call was abandoned at the timeout, not waited for. The bound
+    # is deliberately loose (a busy CI runner once took 1.1s of pure overhead); only "didn't wait for the plugin" matters.
+    assert stats.retried == 1 and time.monotonic() - t0 < 2.5
     inst = db.exec(select(PluginInstance)).one()
     db.refresh(inst)
     assert "timed out" in inst.last_error
