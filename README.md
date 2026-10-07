@@ -3,7 +3,7 @@
 [![hub](https://img.shields.io/github/actions/workflow/status/AndyProsser/ai-core-memory/hub.yml?branch=main&label=build%20%26%20tests)](https://github.com/AndyProsser/ai-core-memory/actions/workflows/hub.yml)
 [![Release](https://img.shields.io/github/v/release/AndyProsser/ai-core-memory?label=release)](https://github.com/AndyProsser/ai-core-memory/releases/latest)
 [![Container image](https://img.shields.io/badge/ghcr.io-ai--core--memory--hub-blue?logo=docker&logoColor=white)](https://github.com/AndyProsser/ai-core-memory/pkgs/container/ai-core-memory-hub)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue?logo=python&logoColor=white)](hub/pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue?logo=python&logoColor=white)](hub/pyproject.toml)
 [![License: MIT](https://img.shields.io/github/license/AndyProsser/ai-core-memory)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/AndyProsser/ai-core-memory)](https://github.com/AndyProsser/ai-core-memory/commits/main)
 

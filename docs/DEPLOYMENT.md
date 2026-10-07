@@ -14,7 +14,7 @@ optional but supported from the first release). Everything past that is optional
 The real definition is [`hub/Dockerfile`](../hub/Dockerfile) (build context: `hub/`):
 
 - Multi-stage: a builder stage builds a wheel of the `ai-core-memory-hub` package; the
-  runtime stage is `python:3.12-slim`, installs only that wheel (no compiler, no source
+  runtime stage is `python:3.14-slim`, installs only that wheel (no compiler, no source
   tree), and runs as a non-root user (`uid 1000`) under `uvicorn` via `acm serve`.
 - One HTTP port (`8000`) serves the web UI, the MCP endpoint (`/mcp`), and `/healthz` —
   one FastAPI process, per ARCHITECTURE.md § Memory hub. The image `HEALTHCHECK` calls `/healthz`.
