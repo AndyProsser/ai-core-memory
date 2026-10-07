@@ -8,6 +8,11 @@
     "editor.wordWrap": "on",
     "files.trimTrailingWhitespace": false
   },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": { "source.organizeImports.ruff": "explicit" }
+  },
   "search.exclude": {
     "memory/data/user": true,
     "memory/data/session": true

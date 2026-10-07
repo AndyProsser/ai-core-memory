@@ -49,4 +49,6 @@ def test_logo_asset_in_docs_matches_the_app_logo():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
-    assert (root / "docs/assets/logo.svg").read_text() == (root / "hub/src/acm_hub/web/static/logo.svg").read_text()
+    assert (root / "docs/assets/logo.svg").read_text() == (
+        root / "hub/src/acm_hub/web/static/logo.svg"
+    ).read_text()

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Format staged hub Python files with ruff, re-stage them, then run the CI lint check.
+# Installed by scripts/install-hooks.sh (core.hooksPath). Bypass once with: git commit --no-verify
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+mapfile -d '' staged < <(git diff --cached --name-only --diff-filter=ACM -z -- 'hub/*.py')
+[[ ${#staged[@]} -eq 0 ]] && exit 0
+command -v ruff >/dev/null || { echo "pre-commit: ruff not found, skipping (CI will still check)" >&2; exit 0; }
+# Don't clobber unstaged edits in a file we're about to reformat and re-add.
+for f in "${staged[@]}"; do
+  if ! git diff --quiet -- "$f"; then
+    echo "pre-commit: $f has unstaged changes; stage or stash them, then commit again" >&2
+    exit 1
+  fi
+done
+(cd hub && ruff format "${staged[@]#hub/}")
+git add -- "${staged[@]}"
+exec scripts/lint.sh

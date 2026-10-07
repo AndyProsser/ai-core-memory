@@ -76,6 +76,13 @@ pytest                            # unit + web + MCP + OIDC (fake IdP) + CLI + a
 ruff check . && ruff format .
 ```
 
+CI runs `ruff format --check`, so unformatted code fails the build. Once per clone, run
+`scripts/install-hooks.sh`: it enables a versioned pre-commit hook (`.githooks/`) that formats
+staged `hub/*.py` files and then runs `scripts/lint.sh`, the same checks CI runs. Run
+`scripts/lint.sh --fix` to fix everything by hand. The repo's `.claude/settings.json` also formats
+Python files right after Claude Code edits them, and `.vscode/` formats on save with the Ruff
+extension.
+
 Schema changes: edit `src/acm_hub/models.py`, then
 `alembic revision --autogenerate -m "what changed"` (uses `alembic.ini`), review the generated
 migration, and commit it. Migrations run automatically at startup and from every `acm` command.
