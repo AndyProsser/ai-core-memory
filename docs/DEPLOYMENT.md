@@ -43,8 +43,9 @@ docker pull ghcr.io/andyprosser/ai-core-memory-hub:latest   # or podman pull
 docker pull ghcr.io/andyprosser/ai-core-memory-hub:0.1.0    # a released version
 ```
 
-**Releasing.** The version lives in `hub/pyproject.toml` (and must match `acm_hub.__version__`; a test enforces it).
-To release, bump it and push to `main`: [`release.yml`](../.github/workflows/release.yml) skips if `vX.Y.Z` already
+**Releasing.** The version lives in the root [`VERSION`](../VERSION) file. To release, edit it, run `python scripts/sync-version.py`
+(it copies the number into `hub/pyproject.toml` and `acm_hub.__version__`, since the hub builds from `hub/` alone; a test
+and the release workflow fail if they disagree), and push to `main`: [`release.yml`](../.github/workflows/release.yml) skips if `vX.Y.Z` already
 exists, otherwise runs the whole hub workflow with that version (tests, smoke test, push `:X.Y.Z`, `:X.Y`, `:latest`),
 and only if that succeeds creates the `vX.Y.Z` tag and a GitHub Release with generated notes. A failed run leaves no tag
 behind, so fix and re-run. *Actions → release → Run workflow* releases the current version on demand. Pushing a
