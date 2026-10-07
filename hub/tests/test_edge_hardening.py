@@ -178,6 +178,83 @@ def test_real_uvicorn_ignores_a_forged_forwarded_for_from_an_untrusted_peer():
     assert _TrustedHosts("*").get_trusted_client_address("1.2.3.4, 203.0.113.7")[0] == "1.2.3.4"
 
 
+def _scope(peer):
+    return {"client": (peer, 5000)}
+
+
+def _cdn_settings(**changes):
+    s = Settings()
+    s.trust_proxy, s.trusted_proxies, s.client_ip_header = True, "10.42.0.0/24", "cf-connecting-ip"
+    for k, v in changes.items():
+        setattr(s, k, v)
+    return s
+
+
+def test_client_ip_header_is_believed_from_a_trusted_proxy():
+    from acm_hub.app import real_client_ip
+
+    got = real_client_ip(_cdn_settings(), _scope("10.42.0.1"), {"cf-connecting-ip": " 203.0.113.7 "})
+    assert got == "203.0.113.7"
+    assert (
+        real_client_ip(_cdn_settings(), _scope("10.42.0.1"), {"cf-connecting-ip": "2001:db8::1"})
+        == "2001:db8::1"
+    )
+
+
+def test_client_ip_header_is_ignored_from_anyone_else():
+    """A direct caller outside the trusted range writes the header itself; believing it would let it pick its bucket."""
+    from acm_hub.app import real_client_ip
+
+    forged = {"cf-connecting-ip": "203.0.113.7"}
+    assert real_client_ip(_cdn_settings(), _scope("198.51.100.9"), forged) is None
+    assert real_client_ip(_cdn_settings(trust_proxy=False), _scope("10.42.0.1"), forged) is None
+    assert real_client_ip(_cdn_settings(client_ip_header=""), _scope("10.42.0.1"), forged) is None
+    assert real_client_ip(_cdn_settings(trusted_proxies="*"), _scope("198.51.100.9"), forged) is None
+
+
+@pytest.mark.parametrize("value", ["", "not-an-ip", "1.2.3.4, 5.6.7.8", "1.2.3.4:80", "999.1.1.1"])
+def test_client_ip_header_must_be_a_single_ip_literal(value):
+    from acm_hub.app import real_client_ip
+
+    assert real_client_ip(_cdn_settings(), _scope("10.42.0.1"), {"cf-connecting-ip": value}) is None
+
+
+def test_client_ip_header_setting_is_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("MEMORY_HUB_CLIENT_IP_HEADER", " CF-Connecting-IP ")
+    assert Settings().client_ip_header == "cf-connecting-ip"
+
+
+def test_per_ip_limits_follow_the_real_client_behind_a_shared_proxy_address(settings):
+    """The deployed bug: every client arrives from the one proxy address, so the 'per-IP' limit was one shared bucket."""
+    settings.trust_proxy, settings.trusted_proxies, settings.client_ip_header = (
+        True,
+        "10.42.0.0/24",
+        "cf-connecting-ip",
+    )
+    root = create_app(settings)
+    proxy = TestClient(root, client=("10.42.0.1", 1))
+    with proxy:
+        setup_admin(proxy, root.fastapi)
+        bad = {"email": "admin@example.com", "password": "wrong-password-1"}
+        for _ in range(8):
+            assert (
+                proxy.post("/login", data=bad, headers={"CF-Connecting-IP": "203.0.113.5"}).status_code == 401
+            )
+        blocked = proxy.post(
+            "/login",
+            data={**bad, "password": PASSWORD},
+            headers={"CF-Connecting-IP": "203.0.113.5"},
+        )
+        assert blocked.status_code == 429
+        ok = proxy.post(
+            "/login",
+            data={**bad, "password": PASSWORD},
+            headers={"CF-Connecting-IP": "198.51.100.9"},
+            follow_redirects=False,
+        )
+        assert ok.status_code == 303
+
+
 def test_only_loopback_counts_as_a_local_name(monkeypatch):
     monkeypatch.setattr("acm_hub.security._LOCAL_HOSTNAMES", frozenset({"localhost"}))  # production's value
     assert is_local_or_private("localhost") and is_local_or_private("127.0.0.1")

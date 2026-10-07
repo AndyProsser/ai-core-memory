@@ -91,6 +91,9 @@ with these deliberate defaults:
   `X-Forwarded-*` when `MEMORY_HUB_TRUST_PROXY=true`. Never `*`. `MEMORY_HUB_ALLOWED_HOSTS` (default empty = off)
   makes the hub refuse any `Host` that isn't the public URL, loopback or listed. `MEMORY_HUB_HSTS_MAX_AGE`
   (default `31536000`, `0` = don't send HSTS) applies only with an https public URL.
+- `MEMORY_HUB_CLIENT_IP_HEADER` (default empty) names a header such as `CF-Connecting-IP` that a CDN in front of your
+  proxy overwrites with the real client address; the hub believes it only from a trusted proxy. Use it when every
+  client otherwise shows up as the proxy's gateway address (see [SECURITY.md](SECURITY.md#network-edge-proxy-trust-headers-and-limits)).
 - `MEMORY_HUB_PLUGINS` (default `true`) is the master switch for plugin execution.
 - `MEMORY_HUB_EGRESS_RESOLVE_PRIVATE` (default `false`) lets plugins use plain `http://` to a hostname whose every
   DNS answer is private (compose service names, Kubernetes Services, LAN hostnames) instead of only literal private

@@ -27,6 +27,7 @@ services:
       MEMORY_HUB_ADMIN_EMAIL: ${MEMORY_HUB_ADMIN_EMAIL:-}
       MEMORY_HUB_TRUST_PROXY: ${MEMORY_HUB_TRUST_PROXY:-false}
       MEMORY_HUB_TRUSTED_PROXIES: ${MEMORY_HUB_TRUSTED_PROXIES:-}  # who may set X-Forwarded-*: your proxy's IP/CIDR, never *
+      MEMORY_HUB_CLIENT_IP_HEADER: ${MEMORY_HUB_CLIENT_IP_HEADER:-}  # e.g. CF-Connecting-IP when a CDN fronts the proxy
       MEMORY_HUB_ALLOWED_HOSTS: ${MEMORY_HUB_ALLOWED_HOSTS:-}  # optional Host allow-list (public URL + loopback always pass)
       MEMORY_HUB_HSTS_MAX_AGE: ${MEMORY_HUB_HSTS_MAX_AGE:-31536000}  # sent only when MEMORY_HUB_PUBLIC_URL is https; 0 = off
       MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS: ${MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS:-24}

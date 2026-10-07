@@ -13,6 +13,9 @@ data:
   # ingress controller's pod range if you can (k3s's default pod CIDR is shown) and apply networkpolicy.example.yaml.
   # Never "*": that makes uvicorn believe the client's own X-Forwarded-For and defeats every per-IP limit.
   MEMORY_HUB_TRUSTED_PROXIES: "10.42.0.0/16"
+  # Optional: behind a CDN that overwrites a header with the real client address (Cloudflare: CF-Connecting-IP), name it so
+  # per-IP limits don't share one bucket when the ingress only sees its own gateway. See docs/SECURITY.md § Behind a CDN.
+  # MEMORY_HUB_CLIENT_IP_HEADER: "CF-Connecting-IP"
   # Optional: refuse any Host that isn't the public URL's (list extra in-cluster names that call /mcp, comma-separated).
   # /healthz is always exempt. Unset = no Host checking.
   # MEMORY_HUB_ALLOWED_HOSTS: "memory-hub.default.svc"

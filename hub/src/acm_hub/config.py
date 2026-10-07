@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import secrets
 from dataclasses import dataclass, field
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from pathlib import Path
 
 
@@ -44,6 +46,11 @@ class Settings:
     # trust_proxy is on. Empty = loopback + private ranges. Set it to just your proxy/ingress (docs/SECURITY.md § Network edge).
     trusted_proxies: str = field(
         default_factory=lambda: os.environ.get("MEMORY_HUB_TRUSTED_PROXIES", "").strip()
+    )
+    # A header carrying the real client address when a CDN sits in front of the proxy (e.g. CF-Connecting-IP), because
+    # the proxy's own X-Forwarded-For can hold only the CDN-facing hop. Honoured only when the peer is a trusted proxy.
+    client_ip_header: str = field(
+        default_factory=lambda: os.environ.get("MEMORY_HUB_CLIENT_IP_HEADER", "").strip().lower()
     )
     # Extra Host header values to accept (comma-separated). Setting this turns Host checking on: the public URL's host,
     # loopback and /healthz are always allowed. Empty = no Host enforcement.
@@ -122,6 +129,15 @@ class Settings:
         if not self.trust_proxy:
             return None
         return self.trusted_proxies or DEFAULT_TRUSTED_PROXIES
+
+    @property
+    def trusted_proxy_networks(self) -> tuple[IPv4Network | IPv6Network, ...]:
+        """`forwarded_allow_ips` as networks; entries that don't parse (and "*") are skipped, so they trust nothing here."""
+        nets = []
+        for part in (self.forwarded_allow_ips or "").split(","):
+            with contextlib.suppress(ValueError):
+                nets.append(ip_network(part.strip(), strict=False))
+        return tuple(nets)
 
     @property
     def extra_allowed_hosts(self) -> frozenset[str]:

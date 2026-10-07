@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -119,6 +120,29 @@ def security_headers(settings: Settings, path: str, scheme: str) -> list[tuple[b
     return [(k.lower().encode(), v.encode()) for k, v in h.items()]
 
 
+def real_client_ip(settings: Settings, scope, headers: dict[str, str]) -> str | None:  # noqa: ANN001
+    """The address named by MEMORY_HUB_CLIENT_IP_HEADER, or None to keep what uvicorn resolved.
+
+    uvicorn has already applied X-Forwarded-For for trusted peers, so `scope["client"]` is either the direct peer or the
+    right-most untrusted hop. Only when that is itself a trusted proxy (i.e. nothing better was found, and the direct
+    peer was trusted) is the header believed; from anyone else it is just a header a caller wrote. The value must be a
+    single IP literal, otherwise it is ignored."""
+    name = settings.client_ip_header
+    client = scope.get("client")
+    if not name or not settings.trust_proxy or not client:
+        return None
+    try:
+        peer = ip_address(client[0])
+    except ValueError:
+        return None
+    if not any(peer in net for net in settings.trusted_proxy_networks):
+        return None
+    try:
+        return str(ip_address(headers.get(name, "").strip()))
+    except ValueError:
+        return None
+
+
 class Root:
     """The outermost ASGI layer. For every request: Host check (opt-in), body-size cap, security headers on whatever
     answers; then /mcp goes through token auth and everything else (and lifespan) to the FastAPI app."""
@@ -157,6 +181,8 @@ class Root:
         path = scope["path"]
         headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in scope["headers"]}
         outer_send = send
+        if (ip := real_client_ip(settings, scope, headers)) is not None:
+            scope["client"] = (ip, 0)  # in place, so uvicorn's access log shows it too
 
         async def send(message):  # noqa: ANN001, ANN202
             if message["type"] == "http.response.start":

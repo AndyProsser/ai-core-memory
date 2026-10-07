@@ -233,12 +233,23 @@ alike. Each item has a test that fails if it is removed (`hub/tests/test_edge_ha
 
 **Proxy trust.** A hub on the internet sits behind a TLS-terminating proxy or ingress. The proxy tells the hub the
 real client address and scheme in `X-Forwarded-For`/`-Proto`; anyone who can reach the hub *without* going through
-the proxy could write those headers themselves. Two settings decide who is believed:
+the proxy could write those headers themselves. Three settings decide who is believed:
 
 | Setting | Meaning |
 | --- | --- |
 | `MEMORY_HUB_TRUST_PROXY` (default `false`) | Honour `X-Forwarded-*` at all. |
 | `MEMORY_HUB_TRUSTED_PROXIES` | Comma-separated IPs/CIDRs allowed to set them. Empty = loopback + RFC1918 + IPv6 ULA (a warning is logged). **Set it to just your proxy/ingress.** `*` is accepted but warned about. |
+| `MEMORY_HUB_CLIENT_IP_HEADER` (default empty) | A header holding the real client address, for a CDN in front of the proxy (`CF-Connecting-IP` on Cloudflare). Needs `MEMORY_HUB_TRUST_PROXY`. |
+
+**Behind a CDN.** A proxy that sits behind another hop (Cloudflare → Traefik → hub, with the load balancer SNATing)
+sees only the nearest hop, so `X-Forwarded-For` can hold the proxy's own gateway address and every client shares one
+per-IP bucket. `MEMORY_HUB_CLIENT_IP_HEADER` names a header the CDN overwrites at its edge. It is believed only when
+the address uvicorn resolved is itself inside `MEMORY_HUB_TRUSTED_PROXIES`, and only if the value is a single IP
+literal; otherwise the hub keeps what `X-Forwarded-For`/the peer gave. The resolved address replaces the ASGI client,
+so the sign-in throttle, token limits, `Secure`-cookie check and uvicorn's access log all use it. Trade-offs: clients
+that reach the proxy without the CDN (LAN, VPN) share one bucket, and one of them can write the header, which only
+lets it choose its own bucket. Don't set this unless the CDN really does overwrite the header and the origin can't be
+reached around it.
 
 With a list, uvicorn takes the right-most address that is *not* a trusted proxy — the one the proxy itself saw, which
 a client can't forge. With `*` it takes the left-most entry, which the client writes: that made every per-IP limit
