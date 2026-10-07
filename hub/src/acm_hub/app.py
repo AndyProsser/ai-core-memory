@@ -38,7 +38,7 @@ WEB_DIR = Path(__file__).parent / "web"
 
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; "
-    "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+    "form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
 )
 
 

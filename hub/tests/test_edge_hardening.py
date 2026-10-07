@@ -25,7 +25,7 @@ from acm_hub.web.deps import STASH_PER_USER, STASH_TOTAL, stash_put
 from .conftest import PASSWORD, csrf_of, setup_admin
 
 EXPECTED_HEADERS = {
-    "content-security-policy": "default-src 'none'",
+    "content-security-policy": "object-src 'none'",
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
     "referrer-policy": "same-origin",

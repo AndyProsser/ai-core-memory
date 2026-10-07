@@ -264,7 +264,7 @@ that sets its own, like the OAuth consent page's CSP, keeps it):
 
 | Header | Value |
 | --- | --- |
-| `Content-Security-Policy` | `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'` |
+| `Content-Security-Policy` | `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'` |
 | `Strict-Transport-Security` | `max-age=31536000` — only when the public URL is https; `MEMORY_HUB_HSTS_MAX_AGE=0` omits it. No `includeSubDomains`/`preload`: those are commitments about *other* hosts and are the operator's call. |
 | `X-Content-Type-Options` / `X-Frame-Options` | `nosniff` / `DENY` (the latter for browsers that predate `frame-ancestors`) |
 | `Referrer-Policy` | `same-origin` |
