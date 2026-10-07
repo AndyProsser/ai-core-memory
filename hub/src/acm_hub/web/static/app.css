@@ -163,3 +163,17 @@ ol.timeline .when { color: var(--text-muted); font-size: .85rem; margin-right: .
 
 form.stack { display: grid; gap: .5rem; } details > summary { cursor: pointer; color: var(--accent); } details[open] > summary { margin-bottom: .5rem; }
 .tabs { flex-wrap: wrap; } select[aria-label] { width: auto; max-width: 100%; } td .actions.flush select { min-width: 9rem; }
+
+/* settings / data: every section sits in its own box */
+.panel { padding: 1.1rem 1.25rem 1.25rem; margin: 1.25rem 0; }
+.panel > h2:first-child { margin: 0 0 .6rem; }
+.panel .card { background: none; border: 0; box-shadow: none; padding: 0; margin: .5rem 0 0; }
+.panel .divided { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: .25rem; }
+.panel .entry { border-top: 1px solid var(--border); padding: .75rem 0; } .panel .entry:first-of-type { border-top: 0; padding-top: 0; } .panel .entry:last-child { padding-bottom: 0; }
+.panel .entry .desc { margin: .25rem 0 .5rem; }
+.panel .empty { margin-top: .25rem; }
+.callout { background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius); padding: .75rem 1rem; margin: .75rem 0; }
+form.row[action="/settings/theme"] { align-items: flex-end; }
+input[type=file] { width: 100%; font: inherit; color: var(--text); }
+input[type=file]::file-selector-button { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: .35rem .8rem; margin-right: .75rem; cursor: pointer; }
+input[type=file]::file-selector-button:hover { border-color: var(--accent); }

@@ -7,28 +7,29 @@
 {{ settings_tabs('account') }}
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
 
+<section class="card panel">
 <h2>Account</h2>
-<div class="card">
   <form method="post" action="/settings/theme" class="row">
     {{ csrf() }}
     <div><label for="theme">Theme</label>
       <select id="theme" name="theme"><option value="system" {% if user.theme_preference == 'system' %}selected{% endif %}>Follow system</option><option value="light" {% if user.theme_preference == 'light' %}selected{% endif %}>Light</option><option value="dark" {% if user.theme_preference == 'dark' %}selected{% endif %}>Dark</option></select></div>
     <div class="shrink"><button type="submit">Save theme</button></div>
   </form>
-</div>
 {% if user.auth_provider == 'local' %}
-<div class="card"><form method="post" action="/settings/password">
+<form method="post" action="/settings/password" class="divided">
   {{ csrf() }}<h3>Change password</h3>
   <div class="row"><div><label for="cur">Current</label><input id="cur" type="password" name="current" autocomplete="current-password" required></div>
   <div><label for="new">New</label><input id="new" type="password" name="new" autocomplete="new-password" minlength="12" required></div>
   <div><label for="cf">Confirm</label><input id="cf" type="password" name="confirm" autocomplete="new-password" required></div></div>
-  <div class="actions"><button type="submit">Change password</button></div></form></div>
-{% else %}<p class="muted">You sign in with single sign-on, so there's no local password.</p>{% endif %}
+  <div class="actions"><button type="submit">Change password</button></div></form>
+{% else %}<p class="muted divided">You sign in with single sign-on, so there's no local password.</p>{% endif %}
+</section>
 
+<section class="card panel">
 <h2>Encrypted private memory</h2>
 {% if not enc.enabled %}
 <p class="muted">Store the text of your <em>personal</em> memory encrypted, under a passphrase only you know. Anyone who gets a copy of the database or a backup — an operator, an admin — sees only ciphertext. Names, descriptions and topics stay readable so search and focus still work, so don't put secrets there. It does not protect against a compromised running hub, and nothing can recover your memory if you lose both the passphrase and the recovery key. <a href="https://github.com/AndyProsser/ai-core-memory/blob/main/docs/SECURITY.md">Details</a></p>
-<form method="post" action="/settings/memory-key/enable" class="card">
+<form method="post" action="/settings/memory-key/enable">
   {{ csrf() }}
   <div class="row">
     <div><label for="mk1">Memory passphrase</label><input id="mk1" type="password" name="passphrase" autocomplete="new-password" minlength="12" required><p class="hint">At least 12 characters. Separate from your sign-in password.</p></div>
@@ -82,8 +83,10 @@
   </form>
 </details>
 {% endif %}
+</section>
 
 {% if oauth_enabled %}
+<section class="card panel">
 <h2>Connected apps</h2>
 <p class="muted">Apps you signed in to this hub (for example Claude.ai). Each one has only the access you approved; disconnecting ends it immediately.</p>
 {% if apps %}
@@ -95,12 +98,14 @@
   <td><form method="post" action="/settings/apps/{{ g.id }}/disconnect">{{ csrf() }}<button class="danger" type="submit">Disconnect</button></form></td></tr>{% endfor %}
 </tbody></table>
 {% else %}<p class="hint">Nothing connected.</p>{% endif %}
+</section>
 {% endif %}
 
+<section class="card panel">
 <h2>API tokens</h2>
 <p class="muted">Tokens let AI clients and scripts talk to this hub over MCP. A token acts as you, limited to what you choose here. It's shown once.</p>
 {% if new_token %}
-<div class="card" role="status"><strong>Copy your token now. It won't be shown again.</strong>
+<div class="callout" role="status"><strong>Copy your token now. It won't be shown again.</strong>
   <div class="tokenbox mono spaced" id="tok">{{ new_token }}</div>
   <button type="button" data-copy="tok">Copy token</button>
   <h3>Connect Claude Code</h3>
@@ -121,7 +126,7 @@
   <td>{% if not t.revoked_at %}<form method="post" action="/settings/tokens/{{ t.id }}/revoke">{{ csrf() }}<button class="danger" type="submit">Revoke</button></form>{% endif %}</td></tr>{% endfor %}
 </tbody></table>
 {% endif %}
-<form method="post" action="/settings/tokens" class="card">
+<form method="post" action="/settings/tokens" class="divided">
   {{ csrf() }}<h3>Create a token</h3>
   <div class="row">
     <div><label for="label">Label</label><input id="label" type="text" name="label" maxlength="80" placeholder="Claude Code on my laptop" required></div>
@@ -136,10 +141,12 @@
   {% if user.auth_provider == 'local' %}<label for="pw">Your password</label><input id="pw" type="password" name="password" autocomplete="current-password" required><p class="hint">Confirms it's you before a credential is minted.</p>{% endif %}
   <div class="actions"><button class="primary" type="submit">Create token</button></div>
 </form>
+</section>
 
 {% if user.is_admin %}
+<section class="card panel">
 <h2>Instance</h2>
-<form method="post" action="/settings/instance" class="card">
+<form method="post" action="/settings/instance">
   {{ csrf() }}
   <div class="row">
     <div><label for="dm">Deployment</label><select id="dm" name="deployment_mode">{% for m,l in [('solo','Just me'),('team','One team'),('multi_team','Several teams')] %}<option value="{{ m }}" {% if inst.deployment_mode == m %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
@@ -158,5 +165,6 @@
   <p class="hint">Single sign-on: {{ 'configured' if oidc_enabled else 'not configured (set MEMORY_HUB_OIDC_* — see docs/DEPLOYMENT.md)' }}.</p>
   <div class="actions"><button type="submit">Save instance settings</button></div>
 </form>
+</section>
 {% endif %}
 {% endblock %}

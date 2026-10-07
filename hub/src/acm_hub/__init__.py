@@ -1,3 +1,3 @@
 """ai-core-memory hub: self-hostable memory store, MCP server, web UI, and offline CLI."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.1"

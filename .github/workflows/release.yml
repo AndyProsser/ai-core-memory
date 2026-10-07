@@ -1,4 +1,4 @@
-# Release = bump `version` in hub/pyproject.toml and push to main. This workflow then:
+# Release = edit VERSION (repo root), run `python scripts/sync-version.py`, and push to main. This workflow then:
 #   1. reads the version (the single source of truth) and skips if vX.Y.Z already exists,
 #   2. runs the full hub workflow (tests, smoke test, publish ghcr.io/<owner>/ai-core-memory-hub:X.Y.Z, :X.Y, :latest),
 #   3. only if that succeeded, creates the vX.Y.Z tag and a GitHub Release with generated notes.
@@ -8,7 +8,7 @@ name: release
 on:
   push:
     branches: [main]
-    paths: ["hub/pyproject.toml"]
+    paths: ["VERSION"]
   workflow_dispatch:
 
 concurrency:
@@ -29,10 +29,10 @@ jobs:
       - uses: actions/checkout@v4
       - id: v
         run: |
-          version=$(python3 -c "import tomllib;print(tomllib.load(open('hub/pyproject.toml','rb'))['project']['version'])")
+          version=$(tr -d '[:space:]' < VERSION)
           echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::version '$version' is not X.Y.Z"; exit 1; }
-          grep -q "^__version__ = \"$version\"" hub/src/acm_hub/__init__.py \
-            || { echo "::error::hub/src/acm_hub/__init__.py __version__ does not match pyproject ($version)"; exit 1; }
+          python3 scripts/sync-version.py --check \
+            || { echo "::error::hub/pyproject.toml or acm_hub.__version__ does not match VERSION ($version); run scripts/sync-version.py"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
           git fetch --tags --quiet
           if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then

@@ -2,6 +2,13 @@
 
 <h1 align="center">ai-core-memory</h1>
 
+[![hub](https://img.shields.io/github/actions/workflow/status/AndyProsser/ai-core-memory/hub.yml?branch=main&label=build%20%26%20tests)](https://github.com/AndyProsser/ai-core-memory/actions/workflows/hub.yml)
+[![Release](https://img.shields.io/github/v/release/AndyProsser/ai-core-memory?label=release)](https://github.com/AndyProsser/ai-core-memory/releases/latest)
+[![Container image](https://img.shields.io/badge/ghcr.io-ai--core--memory--hub-blue?logo=docker&logoColor=white)](https://github.com/AndyProsser/ai-core-memory/pkgs/container/ai-core-memory-hub)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue?logo=python&logoColor=white)](hub/pyproject.toml)
+[![License: MIT](https://img.shields.io/github/license/AndyProsser/ai-core-memory)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/AndyProsser/ai-core-memory)](https://github.com/AndyProsser/ai-core-memory/commits/main)
+
 **An open, self-hosted, cross-platform memory system for AI assistants.**
 
 Every AI chat, code session, and project you work in learns something — and then forgets
@@ -33,6 +40,23 @@ you already knew.
   instructions, intents, and facts — the things worth carrying into every future
   session, in every context that's allowed to see them.
 
+## The memory hub
+
+A self-hosted hub (FastAPI + SQLite + MCP + web UI + `acm` CLI, see [hub/README.md](hub/README.md))
+puts the format to work: review what's remembered, approve what the dream cycle proposes, and preview
+exactly what an AI would be handed for a task. Light and dark themes; everything also works offline
+through the `acm` CLI. (Screenshots show demo data.)
+
+| Memory — core records load every session, the rest are pulled in by task | Review — nothing changes until a person approves it |
+| --- | --- |
+| ![Memory list in dark theme](docs/screenshots/memory.png) | ![Review queue with a merge proposal](docs/screenshots/review.png) |
+
+| Focus preview — what an AI would be handed for a task, and why | Settings — tokens, encrypted private memory, lifecycle |
+| --- | --- |
+| ![Focus preview showing a context pack](docs/screenshots/focus.png) | ![Settings with each section in its own panel](docs/screenshots/settings.png) |
+
+The light theme: [Memory in light](docs/screenshots/memory-light.png).
+
 ## Design principles
 
 1. **Open storage, not a database.** Memory is plain Markdown with YAML frontmatter —
@@ -55,6 +79,7 @@ docs/ARCHITECTURE.md    full design: scopes, memory record schema, the dream pip
 docs/DEPLOYMENT.md      running the memory hub: Docker/Podman/k3s/k8s
 docs/DISTRIBUTION.md    getting skills + the hub into Claude Code and Claude.ai
 docs/SECURITY.md        API token hardening, visibility/roles, local + OIDC auth
+docs/screenshots/       demo-data screenshots used in this README
 memory/schema/          canonical templates for each memory type
 memory/README.md        where runtime memory data lives and what is/isn't committed
 CLAUDE.md               AI working instructions for this repo

@@ -126,6 +126,9 @@ Offline-first and explicit:
 
 ### Settings
 
+On every Settings tab, Data and Plugins, each section (a heading plus its content) sits in its own bordered
+panel (`<section class="card panel">`); a test enforces that every `<h2>` opens one.
+
 - **Account** — email, password (local accounts), linked SSO identity, **Theme**
   (System / Light / Dark).
 - **Link single sign-on** (`/auth/oidc/link`, not a Settings tab) — shown when someone signs in with SSO

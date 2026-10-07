@@ -7,6 +7,8 @@
 {{ settings_tabs('projects') }}
 <p class="muted">A project groups the memory for one codebase or area. Who can read it follows its visibility; who can change it follows ownership{% if deployment_mode != 'solo' %} and team membership{% endif %}.</p>
 
+<section class="card panel">
+<h2>Your projects</h2>
 {% if rows %}
 <table>
   <thead><tr><th>Project</th><th>Visibility</th><th>Memory</th><th></th></tr></thead>
@@ -48,9 +50,11 @@
   </tbody>
 </table>
 {% else %}<div class="empty"><p><strong>No projects yet.</strong></p><p>A project is created automatically the first time memory is written to it, or add one below.</p></div>{% endif %}
+</section>
 
+<section class="card panel">
 <h2>New project</h2>
-<form method="post" action="/settings/projects" class="card">
+<form method="post" action="/settings/projects">
   {{ csrf() }}
   <div class="row">
     <div><label for="slug">Short name</label><input id="slug" type="text" name="slug" required pattern="[a-z0-9][a-z0-9\-]*" maxlength="64" placeholder="payments-service"><p class="hint">a–z, 0–9 and hyphens. This is what AI clients pass as <code>project</code>.</p></div>
@@ -61,4 +65,5 @@
   </div>
   <div class="actions"><button class="primary" type="submit">Create project</button></div>
 </form>
+</section>
 {% endblock %}

@@ -2,6 +2,7 @@ import io
 import re
 import zipfile
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -319,6 +320,16 @@ def test_inbox_capture_and_conversion(authed):
     assert "Idea: try SQLite FTS" not in client.get("/review").text  # harvested
 
 
+@pytest.mark.parametrize("path", ["/settings", "/settings/projects", "/settings/users", "/plugins", "/data"])
+def test_every_settings_section_sits_in_its_own_box(authed, path):
+    """Each <h2> section on the settings and data screens is the heading of its own bordered panel."""
+    client, _app, _csrf = authed
+    html = client.get(path).text
+    headings = re.findall(r"<h2>", html)
+    panels = re.findall(r'<section class="card panel">\s*<h2>', html)
+    assert headings and len(headings) == len(panels), f"{path}: every <h2> must open a panel"
+
+
 def test_templates_have_no_inline_styles_or_scripts():
     """The CSP (style-src 'self', script-src 'self') silently drops inline styles/scripts, so they must never appear."""
     from pathlib import Path
@@ -326,7 +337,7 @@ def test_templates_have_no_inline_styles_or_scripts():
     import acm_hub.web as web
 
     for f in (Path(web.__file__).parent / "templates").glob("*.html"):
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         assert " style=" not in text, f"{f.name} uses an inline style attribute (blocked by CSP)"
         assert not re.search(r"<script(?![^>]*\bsrc=)", text), f"{f.name} has an inline <script>"
         assert not re.search(r"\bon[a-z]+=", text), f"{f.name} has an inline event handler"
