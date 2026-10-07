@@ -31,6 +31,23 @@ you already knew.
   instructions, intents, and facts — the things worth carrying into every future
   session, in every context that's allowed to see them.
 
+## The memory hub
+
+A self-hosted hub (FastAPI + SQLite + MCP + web UI + `acm` CLI, see [hub/README.md](hub/README.md))
+puts the format to work: review what's remembered, approve what the dream cycle proposes, and preview
+exactly what an AI would be handed for a task. Light and dark themes; everything also works offline
+through the `acm` CLI. (Screenshots show demo data.)
+
+| Memory — core records load every session, the rest are pulled in by task | Review — nothing changes until a person approves it |
+| --- | --- |
+| ![Memory list in dark theme](docs/screenshots/memory.png) | ![Review queue with a merge proposal](docs/screenshots/review.png) |
+
+| Focus preview — what an AI would be handed for a task, and why | Settings — tokens, encrypted private memory, lifecycle |
+| --- | --- |
+| ![Focus preview showing a context pack](docs/screenshots/focus.png) | ![Settings with each section in its own panel](docs/screenshots/settings.png) |
+
+The light theme: [Memory in light](docs/screenshots/memory-light.png).
+
 ## Design principles
 
 1. **Open storage, not a database.** Memory is plain Markdown with YAML frontmatter —
@@ -53,6 +70,7 @@ docs/ARCHITECTURE.md    full design: scopes, memory record schema, the dream pip
 docs/DEPLOYMENT.md      running the memory hub: Docker/Podman/k3s/k8s
 docs/DISTRIBUTION.md    getting skills + the hub into Claude Code and Claude.ai
 docs/SECURITY.md        API token hardening, visibility/roles, local + OIDC auth
+docs/screenshots/       demo-data screenshots used in this README
 memory/schema/          canonical templates for each memory type
 memory/README.md        where runtime memory data lives and what is/isn't committed
 CLAUDE.md               AI working instructions for this repo

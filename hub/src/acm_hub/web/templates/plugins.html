@@ -13,6 +13,7 @@
   Either way they only see what you allow below (nothing by default), secrets are never stored here — you give the <em>name</em> of an environment variable — and anything a plugin brings in lands in your inbox, never straight into memory.
 </div>
 
+<section class="card panel">
 <h2>Your plugins</h2>
 {% if rows %}
 <table>
@@ -42,17 +43,21 @@
   </tbody>
 </table>
 {% else %}<div class="empty"><p><strong>No plugins configured.</strong></p><p>Add one below.</p></div>{% endif %}
+</section>
 
+<section class="card panel">
 <h2>Add a plugin</h2>
 {% for p in available %}
-<div class="card">
+<div class="entry">
   <strong>{{ p.info.name }}</strong>
   <span class="badge">{{ {'source': 'brings notes in', 'sink': 'sends notifications', 'both': 'both ways', 'search': 'adds semantic search'}[p.info.kind] }}</span>{% if p.remote %} <span class="badge">runs outside the hub</span>{% endif %}
   <p class="desc">{{ p.info.description }}</p>
   <a class="btn" href="/plugins/new?plugin={{ p.info.key }}">Add</a>
 </div>
 {% endfor %}
+</section>
 {% if services or remote_errors %}
+<section class="card panel">
 <h2>Remote plugin services</h2>
 <p class="muted small">Registered by the operator in the hub's environment. They are contacted in the background, never while a page loads.</p>
 {% for e in remote_errors %}<div class="error small" role="alert">{{ e }}</div>{% endfor %}
@@ -63,5 +68,6 @@
 </tbody></table>
 <form method="post" action="/plugins/remote/refresh">{{ csrf() }}<button type="submit">Check now</button></form>
 {% endif %}
+</section>
 {% endif %}
 {% endblock %}

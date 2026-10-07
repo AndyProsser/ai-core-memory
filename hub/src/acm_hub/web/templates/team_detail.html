@@ -6,6 +6,7 @@
 <header class="page"><div><h1>{{ team.name }}</h1><p class="muted"><a href="/settings/teams">← Teams</a> · {{ team.slug }}{% if role %} · you are {{ 'an owner' if role == 'owner' else 'a member' }}{% endif %}</p></div></header>
 
 {% if role %}
+<section class="card panel">
 <h2>People</h2>
 <table>
   <thead><tr><th>Account</th><th>Role</th><th></th></tr></thead>
@@ -21,10 +22,12 @@
   </tr>{% endfor %}
   </tbody>
 </table>
+</section>
 
 {% if role == 'owner' %}
+<section class="card panel">
 <h2>Add someone</h2>
-<form method="post" action="/settings/teams/{{ team.slug }}/members" class="card">
+<form method="post" action="/settings/teams/{{ team.slug }}/members">
   {{ csrf() }}
   <div class="row">
     <div><label for="email">Account</label><input id="email" type="text" name="email" list="cands" required placeholder="name@example.com" autocomplete="off">
@@ -34,23 +37,28 @@
   </div>
   <div class="actions"><button class="primary" type="submit">Add to team</button></div>
 </form>
+</section>
 {% endif %}
 
+<section class="card panel">
 <h2>Projects</h2>
 {% if projects %}<ul class="records">{% for p in projects %}<li><a class="title" href="/memory?project={{ p.slug }}">{{ p.slug }}</a> <span class="badge">{{ p.visibility }}</span></li>{% endfor %}</ul>
 {% else %}<p class="muted">None yet. {% if role == 'owner' %}Create one under <a href="/settings/projects">Projects</a>.{% endif %}</p>{% endif %}
+</section>
 {% else %}
 <div class="warning small">You're an admin, not a member, of this team: you can delete it but you can't see who is on it or what it remembers.</div>
 {% endif %}
 
 {% if user.is_admin %}
+<section class="card panel">
 <h2>Delete team</h2>
-<form method="post" action="/settings/teams/{{ team.slug }}/delete" class="card stack">
+<form method="post" action="/settings/teams/{{ team.slug }}/delete" class="stack">
   {{ csrf() }}
   <p class="hint">A team that still owns projects can't be deleted. If it has team-scope memory, every record must be archived first (export it with <code>acm export --scope team</code>); then you confirm the purge below.</p>
   <label class="inline"><input type="checkbox" name="purge" value="1"> Permanently delete its archived team-scope records and their history</label>
   <input type="text" name="confirm" placeholder="Type “{{ team.slug }}” to confirm" autocomplete="off" aria-label="Type the team's short name to confirm">
   <button class="danger" type="submit">Delete team</button>
 </form>
+</section>
 {% endif %}
 {% endblock %}

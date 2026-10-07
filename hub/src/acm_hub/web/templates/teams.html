@@ -6,6 +6,8 @@
 <header class="page"><div><h1>Settings</h1><p class="muted">{{ user.email }}</p></div></header>
 {{ settings_tabs('teams') }}
 <p class="muted">Teams share project and team memory. Owners manage who's on a team; admins create teams and accounts but can't read a team's memory unless they're a member.</p>
+<section class="card panel">
+<h2>Your teams</h2>
 {% if teams %}
 <table>
   <thead><tr><th>Team</th><th>Your role</th><th>People</th></tr></thead>
@@ -15,10 +17,12 @@
     <td class="small">{{ sizes.get(t.id, 0) }}</td></tr>{% endfor %}</tbody>
 </table>
 {% else %}<div class="empty"><p><strong>You're not on a team yet.</strong></p><p>An admin creates teams; a team owner then adds you.</p></div>{% endif %}
+</section>
 
 {% if user.is_admin %}
+<section class="card panel">
 <h2>New team</h2>
-<form method="post" action="/settings/teams" class="card">
+<form method="post" action="/settings/teams">
   {{ csrf() }}
   <div class="row">
     <div><label for="name">Name</label><input id="name" type="text" name="name" required maxlength="80" placeholder="Payments"></div>
@@ -28,5 +32,6 @@
   </div>
   <div class="actions"><button class="primary" type="submit">Create team</button></div>
 </form>
+</section>
 {% endif %}
 {% endblock %}
