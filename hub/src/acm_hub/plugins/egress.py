@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..config import get_settings
-from ..security import is_local_or_private
+from ..security import is_link_local, is_local_or_private
 
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -54,7 +54,7 @@ def resolve_private(host: str) -> list[str] | None:
     except (OSError, UnicodeError):
         return None
     addrs = sorted({str(info[4][0]) for info in infos})
-    if addrs and all(is_local_or_private(a) for a in addrs):
+    if addrs and all(is_local_or_private(a) and not is_link_local(a) for a in addrs):
         return addrs
     return None
 
@@ -62,6 +62,8 @@ def resolve_private(host: str) -> list[str] | None:
 def plaintext_allowed(host: str | None) -> bool:
     """May plaintext (http, json://, …) go to this host? Loopback/private IPs always; private-resolving names on opt-in."""
     if not host:
+        return False
+    if is_link_local(host):  # 169.254.x / fe80:: — cloud metadata lives here; a plugin has no business there
         return False
     if is_local_or_private(host):
         return True

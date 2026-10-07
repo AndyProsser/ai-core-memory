@@ -12,6 +12,12 @@ from acm_hub.db import make_engine, migrate
 from acm_hub.models import InstanceSettings, User
 
 
+@pytest.fixture(autouse=True)
+def _testclient_is_local(monkeypatch):
+    """Starlette's TestClient reports its peer as "testclient"; production code only knows real addresses."""
+    monkeypatch.setattr("acm_hub.security._LOCAL_HOSTNAMES", frozenset({"localhost", "testclient"}))
+
+
 @pytest.fixture()
 def settings(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORY_HUB_DB_PATH", str(tmp_path / "data" / "hub.sqlite3"))

@@ -13,7 +13,7 @@ from sqlmodel import Session
 
 from .. import crypto_store
 from ..access import Principal, principal_for_user, require_read
-from ..auth import SESSION_COOKIE, csrf_ok, lookup_web_session
+from ..auth import csrf_ok, lookup_web_session
 from ..focus import build_focus
 from ..models import InstanceSettings, MemoryRecord
 from ..orgs import visible_projects, visible_teams
@@ -39,7 +39,9 @@ def api_user(request: Request, db: Session = Depends(get_db)) -> Ctx:
             401,
             "This API takes a signed-in session, not API tokens. Tokens are for the MCP endpoint (/mcp).",
         )
-    found = lookup_web_session(db, request.app.state.settings, request.cookies.get(SESSION_COOKIE))
+    found = lookup_web_session(
+        db, request.app.state.settings, request.cookies.get(request.app.state.settings.session_cookie_name)
+    )
     if found is None:
         raise HTTPException(401, "Not signed in.")
     user, ws = found
@@ -57,6 +59,7 @@ def api_write(request: Request, ctx: Ctx = Depends(api_user)) -> Ctx:
         request.headers.get("x-csrf-token"),
         request.headers.get("origin"),
         request.headers.get("host"),
+        request.headers.get("sec-fetch-site"),
     ):
         raise HTTPException(403, "Missing or wrong X-CSRF-Token (read it from GET /api/v1/me).")
     return ctx

@@ -8,21 +8,24 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import anyio
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import text
 from sqlmodel import Session, select
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__, dispatcher, keys
 from .auth import AuthError, authenticate_bearer, has_admin, issue_setup_code, purge_expired
 from .config import Settings, get_settings
 from .consolidate import maybe_run_consolidation
 from .db import make_engine, migrate
+from .exportimport import MAX_TOTAL_BYTES
 from .mcp_server import current_principal, mcp
 from .mcp_server import state as mcp_state
 from .models import InstanceSettings
@@ -60,7 +63,6 @@ class McpAuthMiddleware:
                     st.token_limiter,
                     headers.get("authorization"),
                     scheme=scope.get("scheme", "http"),
-                    headers=headers,
                     client_host=client[0],
                 )
         except AuthError as e:
@@ -83,15 +85,116 @@ class McpAuthMiddleware:
             current_principal.reset(tok)
 
 
+# Request bodies are capped before any route sees them (a declared Content-Length is refused outright; a chunked body is
+# cut off as it is read). Everything here is small text except an import archive.
+MAX_BODY_BYTES = 10 * 1024 * 1024
+BODY_LIMITS = {"/data/import": MAX_TOTAL_BYTES + 1024 * 1024}
+
+PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=()"
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _host_of(value: str) -> str:
+    """The hostname in a Host header, without port or IPv6 brackets."""
+    value = value.strip().lower()
+    if value.startswith("["):
+        return value[1:].split("]", 1)[0]
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
+def security_headers(settings: Settings, path: str, scheme: str) -> list[tuple[bytes, bytes]]:
+    """Headers every response gets unless the route already set its own (the OAuth consent page widens form-action)."""
+    h = {
+        "Content-Security-Policy": CSP,
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "same-origin",
+        "Permissions-Policy": PERMISSIONS_POLICY,
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "Cache-Control": "public, max-age=3600" if path.startswith("/static/") else "no-store",
+    }
+    if settings.hsts_max_age > 0 and (settings.public_https or scheme == "https"):
+        h["Strict-Transport-Security"] = f"max-age={settings.hsts_max_age}"
+    return [(k.lower().encode(), v.encode()) for k, v in h.items()]
+
+
 class Root:
-    """Routes /mcp through token auth; everything else (and lifespan) to the FastAPI app."""
+    """The outermost ASGI layer. For every request: Host check (opt-in), body-size cap, security headers on whatever
+    answers; then /mcp goes through token auth and everything else (and lifespan) to the FastAPI app."""
 
     def __init__(self, hub: FastAPI, mcp_asgi):  # noqa: ANN001
         self.hub = hub
         self.mcp = McpAuthMiddleware(mcp_asgi, hub)
 
+    @staticmethod
+    async def _reply(send, status: int, message: str) -> None:  # noqa: ANN001
+        body = json.dumps({"error": message}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    def _host_allowed(self, settings: Settings, headers: dict[str, str], path: str) -> bool:
+        extra = settings.extra_allowed_hosts
+        if not extra or path == "/healthz":  # off unless the operator listed hosts; probes call by pod IP
+            return True
+        public = (urlsplit(settings.public_url).hostname or "").lower()
+        return _host_of(headers.get("host", "")) in (extra | _LOOPBACK_HOSTS | {public})
+
     async def __call__(self, scope, receive, send):  # noqa: ANN001
-        if scope["type"] == "http" and (scope["path"] == "/mcp" or scope["path"].startswith("/mcp/")):
+        if scope["type"] != "http":
+            await self.hub(scope, receive, send)
+            return
+        settings = self.hub.state.settings
+        path = scope["path"]
+        headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in scope["headers"]}
+        outer_send = send
+
+        async def send(message):  # noqa: ANN001, ANN202
+            if message["type"] == "http.response.start":
+                have = {k.lower() for k, _ in message["headers"]}
+                message = {
+                    **message,
+                    "headers": [
+                        *message["headers"],
+                        *(
+                            (k, v)
+                            for k, v in security_headers(settings, path, scope.get("scheme", "http"))
+                            if k not in have
+                        ),
+                    ],
+                }
+            await outer_send(message)
+
+        if not self._host_allowed(settings, headers, path):
+            await self._reply(send, 400, "Unknown host.")
+            return
+        limit = BODY_LIMITS.get(path, MAX_BODY_BYTES)
+        declared = headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > limit:
+            await self._reply(send, 413, "Request body is too large.")
+            return
+        seen = 0
+        inner_receive = receive
+
+        async def receive():  # noqa: ANN202
+            nonlocal seen
+            message = await inner_receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > limit:  # a chunked body that never declared its size
+                    raise StarletteHTTPException(413, "Request body is too large.")
+            return message
+
+        if path == "/mcp" or path.startswith("/mcp/"):
             await self.mcp(scope, receive, send)
         else:
             await self.hub(scope, receive, send)
@@ -205,24 +308,14 @@ def create_app(settings: Settings | None = None, *, http_client_factory=None) ->
     app.state.login_throttle = LoginThrottle()
     app.state.unlock_cache = keys.UnlockCache()  # data keys of unlocked web sessions: server memory only
     app.state.key_throttle = SlidingWindowLimiter(8, 600)  # passphrase attempts per person
+    app.state.reauth_throttle = SlidingWindowLimiter(
+        8, 600
+    )  # current-password checks (change password, mint token) per person
     app.state.http_client_factory = http_client_factory or (
         lambda: httpx.AsyncClient(timeout=10.0, follow_redirects=False)
     )
     app.state.import_stash = {}  # id -> (user_id, files, expires_at); dry-run uploads awaiting Apply
     mcp_state.engine = engine
-
-    @app.middleware("http")
-    async def security_headers(request: Request, call_next):  # noqa: ANN001
-        response = await call_next(request)
-        response.headers.setdefault("Content-Security-Policy", CSP)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "same-origin")
-        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
-        if request.url.path.startswith(("/static/",)):
-            response.headers.setdefault("Cache-Control", "public, max-age=3600")
-        else:
-            response.headers.setdefault("Cache-Control", "no-store")
-        return response
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> JSONResponse:

@@ -61,6 +61,12 @@ def _settings_page(
     )
 
 
+def _throttle_password_checks(request: Request, ctx: Ctx) -> None:
+    """A stolen session mustn't become a password-guessing oracle through the 'enter your password' forms."""
+    if not request.app.state.reauth_throttle.allow(ctx.user.id):
+        raise AccessError("Too many password checks. Wait a few minutes and try again.")
+
+
 @router.get("/settings")
 def settings_page(request: Request, ctx: Ctx = Depends(require_user)):  # noqa: ANN201
     return _settings_page(request, ctx)
@@ -78,12 +84,17 @@ def set_theme(theme: str = Form("system"), ctx: Ctx = Depends(user_csrf)) -> Red
 
 @router.post("/settings/password")
 def set_password(
-    current: str = Form(""), new: str = Form(""), confirm: str = Form(""), ctx: Ctx = Depends(user_csrf)
+    request: Request,
+    current: str = Form(""),
+    new: str = Form(""),
+    confirm: str = Form(""),
+    ctx: Ctx = Depends(user_csrf),
 ) -> RedirectResponse:
     if ctx.user.auth_provider != "local":
         raise AccessError(
             "This account signs in through single sign-on; there's no local password to change."
         )
+    _throttle_password_checks(request, ctx)
     if not verify_password(ctx.user.password_hash, current):
         return RedirectResponse(notice_url("/settings", "Your current password is wrong."), status_code=303)
     if new != confirm:
@@ -106,6 +117,7 @@ async def create_token(request: Request, ctx: Ctx = Depends(user_csrf)):  # noqa
     form = await request.form()
     # Minting a credential needs a fresh proof of identity, not just a live session.
     if ctx.user.auth_provider == "local":
+        _throttle_password_checks(request, ctx)
         if not verify_password(ctx.user.password_hash, str(form.get("password") or "")):
             return _settings_page(request, ctx, error="Enter your password to create a token.", status=403)
     elif not recently_authenticated(ctx.ws):

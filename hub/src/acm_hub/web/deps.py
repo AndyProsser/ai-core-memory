@@ -17,7 +17,7 @@ from sqlmodel import Session, func, select
 
 from .. import __version__, crypto_store
 from ..access import AccessError, NotFound, Principal, principal_for_user
-from ..auth import SESSION_COOKIE, cookie_should_be_secure, csrf_ok, has_admin, lookup_web_session
+from ..auth import cookie_should_be_secure, csrf_ok, has_admin, lookup_web_session
 from ..models import InboxItem, InstanceSettings, User, WebSession
 from ..proposals import pending_count
 from ..records import Conflict, ValidationFailed
@@ -74,7 +74,7 @@ def _client_host(request: Request) -> str | None:
 
 def require_user(request: Request, db: Session = Depends(get_db)) -> Ctx:
     settings = request.app.state.settings
-    found = lookup_web_session(db, settings, request.cookies.get(SESSION_COOKIE))
+    found = lookup_web_session(db, settings, request.cookies.get(settings.session_cookie_name))
     if found is None:
         if not has_admin(db):
             raise RedirectTo("/setup")
@@ -94,7 +94,13 @@ async def user_csrf(request: Request, ctx: Ctx = Depends(require_user)) -> Ctx:
     if not supplied:
         form = await request.form()
         supplied = str(form.get("csrf_token") or "")
-    if not csrf_ok(ctx.ws, supplied, request.headers.get("origin"), request.headers.get("host")):
+    if not csrf_ok(
+        ctx.ws,
+        supplied,
+        request.headers.get("origin"),
+        request.headers.get("host"),
+        request.headers.get("sec-fetch-site"),
+    ):
         raise AccessError(
             "Your session expired or the form was tampered with. Reload the page and try again."
         )
@@ -103,11 +109,9 @@ async def user_csrf(request: Request, ctx: Ctx = Depends(require_user)) -> Ctx:
 
 def set_session_cookie(request: Request, response, raw: str) -> None:  # noqa: ANN001
     settings = request.app.state.settings
-    secure = cookie_should_be_secure(
-        request.url.scheme, dict(request.headers), _client_host(request), settings
-    )
+    secure = cookie_should_be_secure(request.url.scheme, _client_host(request), settings)
     response.set_cookie(
-        SESSION_COOKIE,
+        settings.session_cookie_name,
         raw,
         httponly=True,
         secure=secure,
@@ -202,6 +206,10 @@ def install_error_handlers(app: FastAPI) -> None:
         return page(request, exc.status_code, "Error", str(exc.detail))
 
 
+STASH_PER_USER = 2
+STASH_TOTAL = 12
+
+
 def stash_put(request: Request, user_id: str, files: dict[str, bytes]) -> str:
     from ..security import new_csrf_token
 
@@ -209,6 +217,12 @@ def stash_put(request: Request, user_id: str, files: dict[str, bytes]) -> str:
     now = time.time()
     for k in [k for k, v in stash.items() if v[2] < now]:
         stash.pop(k, None)
+    # Each preview can hold tens of MB: keep a few per person and a few overall, oldest out first.
+    mine = [k for k, v in stash.items() if v[0] == user_id]
+    for k in mine[: max(0, len(mine) - (STASH_PER_USER - 1))]:
+        stash.pop(k, None)
+    while len(stash) >= STASH_TOTAL:
+        stash.pop(next(iter(stash)))
     key = new_csrf_token()
     stash[key] = (user_id, files, now + 900)
     return key

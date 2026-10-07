@@ -42,8 +42,9 @@ breach. Every point below exists for that one reason.
   without forcing a TLS setup just to try it out). "Private" is an explicit list —
   loopback, `10/8`, `172.16/12`, `192.168/16`, link-local, IPv6 ULA — not Python's broader
   `is_private`, which also covers documentation and other reserved ranges. Behind a TLS-terminating
-  reverse proxy, set `MEMORY_HUB_TRUST_PROXY=true` so `X-Forwarded-Proto` is honoured (off by
-  default: those headers are spoofable by anyone who can reach the hub directly).
+  reverse proxy, set `MEMORY_HUB_TRUST_PROXY=true` **and** `MEMORY_HUB_TRUSTED_PROXIES` to the proxy's
+  address so `X-Forwarded-Proto`/`-For` are honoured — and only from it (off by default: those headers are
+  spoofable by anyone who can reach the hub directly; see [Network edge](#network-edge-proxy-trust-headers-and-limits)).
 - **Owned by a user, minted by a person.** A token acts as the user who created it,
   never with more access than that user has, and can only be created from a logged-in web
   session or the host CLI (never by another token). Each token is created with a label,
@@ -201,21 +202,90 @@ account (pre-invite only).
 
 The web UI authenticates with a server-side session, not an API token:
 
-- Session cookie: `HttpOnly`, `Secure` (except on localhost/RFC1918 plain HTTP),
-  `SameSite=Lax`, rotated on login, idle and absolute timeouts configurable.
+- Session cookie: `HttpOnly`, `Secure`, `SameSite=Lax`, rotated on login, idle and absolute timeouts
+  configurable. `Secure` is **always** on when `MEMORY_HUB_PUBLIC_URL` is `https://` — whatever the last hop to
+  the hub looks like, since behind a TLS-terminating proxy that hop is plain http from a private address — and
+  otherwise on except for plain HTTP from localhost/RFC1918. With an https public URL the cookie is also named
+  `__Host-acm_session`, so a sibling subdomain or a plain-http origin can't plant or overwrite it.
 - **CSRF protection** on every state-changing request (synchronizer token via HTMX
   headers); the UI never accepts API tokens, and the API never accepts session cookies
-  for MCP/REST token routes — the two credential types can't be confused.
+  for MCP/REST token routes — the two credential types can't be confused. A matching `Origin` is required when
+  sent, and a browser that sends `Sec-Fetch-Site` must say `same-origin` or `none`: a valid token submitted from a
+  `same-site` (sibling subdomain) or `cross-site` page is refused. Login, first-run setup and the SSO-link form
+  have no session token to check, so they rely on the same two headers.
 - Strict `Content-Security-Policy` — `script-src 'self'; style-src 'self'; default-src 'none'` —
   with **no inline scripts, styles, or event handlers at all** (a test fails the build if one
   appears in a template). The no-flash theme bootstrap is a same-origin _blocking_ script in
   `<head>`, not an inline one, so no nonce machinery is needed. No third-party origins: the UI
-  loads nothing from a CDN (htmx is vendored).
-- Login throttling per account and per IP; password-change and token-mint actions
-  re-prompt for the password (local accounts) or recent OIDC re-authentication.
+  loads nothing from a CDN (htmx is vendored). The rest of the response headers are listed under
+  [Network edge](#network-edge-proxy-trust-headers-and-limits).
+- Login throttling (budgets below); password-change and token-mint actions
+  re-prompt for the password (local accounts) or recent OIDC re-authentication, and those password checks are
+  themselves limited to 8 per 10 minutes per person, so a stolen session can't be used to guess the password.
 - Record bodies are untrusted markdown: rendered through a sanitizing renderer (no raw
   HTML, no script, links `rel="noopener noreferrer"`) so a malicious memory can't attack
   the person reviewing it.
+
+## Network edge: proxy trust, headers, and limits
+
+Everything here sits in front of the routes, so it applies to the web UI, `/api/v1`, `/mcp` and the OAuth endpoints
+alike. Each item has a test that fails if it is removed (`hub/tests/test_edge_hardening.py`).
+
+**Proxy trust.** A hub on the internet sits behind a TLS-terminating proxy or ingress. The proxy tells the hub the
+real client address and scheme in `X-Forwarded-For`/`-Proto`; anyone who can reach the hub *without* going through
+the proxy could write those headers themselves. Two settings decide who is believed:
+
+| Setting | Meaning |
+| --- | --- |
+| `MEMORY_HUB_TRUST_PROXY` (default `false`) | Honour `X-Forwarded-*` at all. |
+| `MEMORY_HUB_TRUSTED_PROXIES` | Comma-separated IPs/CIDRs allowed to set them. Empty = loopback + RFC1918 + IPv6 ULA (a warning is logged). **Set it to just your proxy/ingress.** `*` is accepted but warned about. |
+
+With a list, uvicorn takes the right-most address that is *not* a trusted proxy — the one the proxy itself saw, which
+a client can't forge. With `*` it takes the left-most entry, which the client writes: that made every per-IP limit
+bypassable and let `X-Forwarded-For: 127.0.0.1` pass for "local". The hub also no longer reads `X-Forwarded-Proto`
+itself: only the scheme uvicorn derives, for the peers it trusts, counts — so the "no API tokens over plain http" rule
+can't be dodged by a header from a direct caller. Even with a tight list, anything *inside* the trusted range can
+still forge the header (another pod, another container on the proxy's network): keep the hub's port reachable only
+from the proxy (a `NetworkPolicy` on Kubernetes, loopback binding or an internal network on Docker).
+
+**Response headers** (added by the outermost layer, so `/mcp`, error pages and static files get them too; a route
+that sets its own, like the OAuth consent page's CSP, keeps it):
+
+| Header | Value |
+| --- | --- |
+| `Content-Security-Policy` | `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'` |
+| `Strict-Transport-Security` | `max-age=31536000` — only when the public URL is https; `MEMORY_HUB_HSTS_MAX_AGE=0` omits it. No `includeSubDomains`/`preload`: those are commitments about *other* hosts and are the operator's call. |
+| `X-Content-Type-Options` / `X-Frame-Options` | `nosniff` / `DENY` (the latter for browsers that predate `frame-ancestors`) |
+| `Referrer-Policy` | `same-origin` |
+| `Permissions-Policy` | camera, microphone, geolocation, payment, usb, serial, bluetooth all denied |
+| `Cross-Origin-Opener-Policy` / `-Resource-Policy` | `same-origin` (CORP only affects no-cors loads; the OAuth metadata endpoints stay readable by CORS clients) |
+| `Cache-Control` | `no-store` everywhere except `/static/` |
+
+The `Server: uvicorn` header is not sent.
+
+**Request size.** A declared `Content-Length` over 10 MiB is refused with `413` before any route runs, and a chunked
+body is cut off as it is read, so an unauthenticated caller can't make the hub buffer an arbitrary upload. The one
+exception is `/data/import` (an export archive, up to its own 64 MiB limit). Import previews held for "Apply" are
+limited to 2 per person and 12 overall.
+
+**Host header (opt-in).** Set `MEMORY_HUB_ALLOWED_HOSTS` and the hub answers `400` to any `Host` that isn't the public
+URL's host, loopback, or one you listed (`/healthz` is always exempt, because kubelet probes by pod IP). Unset, nothing
+is enforced — a LAN hub is reached by whatever name or IP works. Remember to list every in-cluster name other services
+use to reach `/mcp`.
+
+**Sign-in throttle.** Failed attempts are counted against three keys: *account + address* and *address* (8 failures
+per 15 minutes each) and *account across all addresses* (40). So one address can lock *itself* out but can't lock a
+person out of their own account from elsewhere, while a distributed guesser still hits the account-wide budget. A
+success clears the address keys, never the account-wide one. Keys are length-capped and the tables are bounded, so
+caller-chosen emails and addresses can't grow the hub's memory. The same budget covers the SSO account-link form.
+
+**Plugin egress.** Link-local addresses (`169.254.0.0/16`, `fe80::/10`) are never a plain-http target for a plugin,
+even though they pass the "private network" test used elsewhere: that range is where cloud metadata services answer.
+
+**Limits.** The throttles, like the rest of the hub's state, live in process memory and reset on restart. Rate limits
+keyed by address are only as good as the address: they assume `MEMORY_HUB_TRUSTED_PROXIES` is accurate. HSTS is sent
+only after the first https response, so the very first visit to a new hostname is still protectable only by the
+proxy redirecting http to https (do that at the proxy).
 
 ## MCP OAuth (optional)
 
@@ -365,7 +435,7 @@ to the wrong Slack channel can't be un-posted.
   Service name, a LAN hostname — so in-cluster plain-http targets work without IP literals. Any public
   answer, or a failed lookup, still refuses. The egress client then connects to the exact address it
   checked (with the original `Host` header), so DNS that changes between the check and the request
-  can't redirect plaintext traffic to a public host. Trade-off when enabled: whoever controls the
+  can't redirect plaintext traffic to a public host. Link-local addresses (cloud metadata) are excluded from plaintext targets altogether. Trade-off when enabled: whoever controls the
   hub's DNS decides what counts as "private" — appropriate when that's your own cluster/LAN resolver.
 - **Auditable.** Every delivery and every inbound pull is recorded (`plugin_deliveries`,
   last status/error on the instance) and visible in the Plugins screen. (Source plugins only add inbox

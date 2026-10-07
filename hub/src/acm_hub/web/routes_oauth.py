@@ -10,7 +10,7 @@ from sqlmodel import Session
 
 from .. import oauth
 from ..access import AccessError, NotFound, principal_for_user
-from ..auth import SESSION_COOKIE, lookup_web_session
+from ..auth import lookup_web_session
 from ..models import OAuthClient, OAuthGrant, OAuthRequest, utcnow
 from ..orgs import visible_projects
 from .deps import Ctx, get_db, notice_url, render, user_csrf
@@ -69,7 +69,9 @@ def _consent_page(
 def consent_form(request: Request, db: Session = Depends(get_db)):  # noqa: ANN201
     _enabled(request)
     rid = request.query_params.get("request", "")
-    found = lookup_web_session(db, request.app.state.settings, request.cookies.get(SESSION_COOKIE))
+    found = lookup_web_session(
+        db, request.app.state.settings, request.cookies.get(request.app.state.settings.session_cookie_name)
+    )
     if found is None:
         return RedirectResponse(
             f"/login?next={quote('/oauth/consent?request=' + quote(rid))}", status_code=303

@@ -823,16 +823,32 @@ def cmd_key(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    import logging
+
     import uvicorn
 
+    settings = get_settings()
+    if settings.trust_proxy:
+        log = logging.getLogger("acm_hub")
+        if settings.trusted_proxies.strip() == "*":
+            log.warning(
+                "MEMORY_HUB_TRUSTED_PROXIES=* trusts X-Forwarded-For from anyone: clients can forge their address and "
+                "dodge every per-IP limit. List your proxy's address or CIDR instead."
+            )
+        elif not settings.trusted_proxies:
+            log.warning(
+                "MEMORY_HUB_TRUST_PROXY is on but MEMORY_HUB_TRUSTED_PROXIES isn't set: trusting loopback and private "
+                "ranges. Set it to just your proxy/ingress (e.g. 10.42.0.0/16 for k3s) so nothing else can forge X-Forwarded-*."
+            )
     uvicorn.run(
         "acm_hub.app:create_app",
         factory=True,
         host=args.host,
         port=args.port,
         log_level="info",
-        proxy_headers=get_settings().trust_proxy,
-        forwarded_allow_ips="*" if get_settings().trust_proxy else None,
+        server_header=False,
+        proxy_headers=settings.trust_proxy,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
     )
     return 0
 

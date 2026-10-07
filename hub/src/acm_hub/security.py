@@ -14,7 +14,7 @@ import json
 import secrets
 import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
@@ -132,6 +132,24 @@ _LAN_NETWORKS = tuple(
 )
 
 
+# The one hostname that counts as "this machine". Real peers are always IP addresses, so production code names nothing
+# else; the tests widen this with Starlette's "testclient" peer name (tests/conftest.py).
+_LOCAL_HOSTNAMES = frozenset({"localhost"})
+
+_LINK_LOCAL = (ipaddress.ip_network("169.254.0.0/16"), ipaddress.ip_network("fe80::/10"))
+
+
+def is_link_local(host: str | None) -> bool:
+    """169.254.0.0/16 and fe80::/10 — where cloud metadata services live. Fine for a LAN check, never an egress target."""
+    try:
+        ip = ipaddress.ip_address(host or "")
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return any(ip in net for net in _LINK_LOCAL)
+
+
 def is_local_or_private(host: str | None) -> bool:
     """Loopback or an RFC1918/link-local address: where plaintext HTTP is tolerated (LAN self-hosting).
 
@@ -139,7 +157,7 @@ def is_local_or_private(host: str | None) -> bool:
     ranges that aren't "your own network"."""
     if not host:
         return False
-    if host in {"localhost", "testclient"}:  # "testclient" is Starlette's TestClient peer name
+    if host in _LOCAL_HOSTNAMES:
         return True
     try:
         ip = ipaddress.ip_address(host)
@@ -152,6 +170,18 @@ def is_local_or_private(host: str | None) -> bool:
 
 # --- throttling ----------------------------------------------------------------------------------
 
+_MAX_KEYS = (
+    10_000  # keys are caller-chosen (an email address, an IP), so the tables must not grow without bound
+)
+
+
+def _sweep(table: dict[str, deque[float]], now: float, window: float) -> None:
+    """Drop keys with nothing left in their window; if an attacker still fills the table, drop the oldest."""
+    for k in [k for k, q in table.items() if not q or now - q[-1] > window]:
+        del table[k]
+    while len(table) > _MAX_KEYS:
+        del table[next(iter(table))]
+
 
 class SlidingWindowLimiter:
     """Per-key requests in the last `window` seconds. In-process (the hub is a single process)."""
@@ -159,13 +189,15 @@ class SlidingWindowLimiter:
     def __init__(self, limit: int, window: float = 60.0):
         self.limit = limit
         self.window = window
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._hits: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
         with self._lock:
-            q = self._hits[key]
+            if len(self._hits) > _MAX_KEYS // 2:
+                _sweep(self._hits, now, self.window)
+            q = self._hits.setdefault(key, deque())
             while q and now - q[0] > self.window:
                 q.popleft()
             if len(q) >= self.limit:
@@ -175,29 +207,58 @@ class SlidingWindowLimiter:
 
 
 class LoginThrottle:
-    """Failed-login lockout per key (account or client address)."""
+    """Failed-login lockout. Each key (account+address, account, address) has its own budget, so one address can't
+    lock a person out of their own account: it runs out of its own budget first."""
 
     def __init__(self, max_failures: int = 8, window: float = 900.0):
         self.max_failures = max_failures
         self.window = window
-        self._fails: dict[str, deque[float]] = defaultdict(deque)
+        self._fails: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
-    def _prune(self, q: deque[float], now: float) -> None:
-        while q and now - q[0] > self.window:
-            q.popleft()
-
-    def blocked(self, key: str) -> bool:
+    def blocked(self, key: str, limit: int | None = None) -> bool:
         now = time.monotonic()
         with self._lock:
-            q = self._fails[key]
-            self._prune(q, now)
-            return len(q) >= self.max_failures
+            q = self._fails.get(key)  # never creates an entry: a lookup mustn't cost memory
+            if q is None:
+                return False
+            while q and now - q[0] > self.window:
+                q.popleft()
+            return len(q) >= (limit or self.max_failures)
 
     def failure(self, key: str) -> None:
+        now = time.monotonic()
         with self._lock:
-            self._fails[key].append(time.monotonic())
+            if len(self._fails) > _MAX_KEYS // 2:
+                _sweep(self._fails, now, self.window)
+            self._fails.setdefault(key, deque()).append(now)
 
     def success(self, key: str) -> None:
         with self._lock:
             self._fails.pop(key, None)
+
+    # --- a sign-in attempt, counted against three keys (keys are length-capped: they're caller-chosen) ---------
+
+    ACCOUNT_LIMIT = (
+        40  # across every address: well above the per-address budget, so a lone guesser is stopped first
+    )
+
+    @staticmethod
+    def _attempt_keys(email: str, ip: str) -> tuple[str, str, str]:
+        e = email.strip().lower()[:254]
+        return f"acct-ip:{e}|{ip}", f"ip:{ip}", f"acct:{e}"
+
+    def attempt_blocked(self, email: str, ip: str) -> bool:
+        pair, by_ip, acct = self._attempt_keys(email, ip)
+        return self.blocked(pair) or self.blocked(by_ip) or self.blocked(acct, self.ACCOUNT_LIMIT)
+
+    def attempt_failed(self, email: str, ip: str) -> None:
+        for k in self._attempt_keys(email, ip):
+            self.failure(k)
+
+    def attempt_succeeded(self, email: str, ip: str) -> None:
+        """Clears this address's counts. The account-wide count is left to age out, so a success from one address
+        can't be used to reset the budget while another address keeps guessing."""
+        pair, by_ip, _ = self._attempt_keys(email, ip)
+        self.success(pair)
+        self.success(by_ip)

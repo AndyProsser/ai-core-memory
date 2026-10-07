@@ -9,6 +9,13 @@ data:
   MEMORY_HUB_PUBLIC_URL: https://memory.example.com
   # true only when a TLS-terminating proxy/ingress sits in front (it then trusts X-Forwarded-*).
   MEMORY_HUB_TRUST_PROXY: "true"
+  # ...and ONLY from these peers. Anything else that can reach the pod can forge X-Forwarded-For, so narrow this to your
+  # ingress controller's pod range if you can (k3s's default pod CIDR is shown) and apply networkpolicy.example.yaml.
+  # Never "*": that makes uvicorn believe the client's own X-Forwarded-For and defeats every per-IP limit.
+  MEMORY_HUB_TRUSTED_PROXIES: "10.42.0.0/16"
+  # Optional: refuse any Host that isn't the public URL's (list extra in-cluster names that call /mcp, comma-separated).
+  # /healthz is always exempt. Unset = no Host checking.
+  # MEMORY_HUB_ALLOWED_HOSTS: "memory-hub.default.svc"
   MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS: "24"
   MEMORY_HUB_PLUGINS: "true"
   # Let plugins use plain http to in-cluster Service names (every DNS answer must be private; the connection is pinned

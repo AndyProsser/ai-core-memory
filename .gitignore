@@ -33,3 +33,7 @@ memory/data/session/
 hub/data/
 *.egg-info/
 !.env.example
+
+# Build output (setuptools drops a stale copy of the source here)
+build/
+*.egg-info/

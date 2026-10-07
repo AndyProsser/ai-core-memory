@@ -20,6 +20,9 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+DEFAULT_TRUSTED_PROXIES = "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+
+
 @dataclass
 class Settings:
     db_path: Path = field(
@@ -37,7 +40,17 @@ class Settings:
     admin_email: str = field(default_factory=lambda: os.environ.get("MEMORY_HUB_ADMIN_EMAIL", ""))
     # Behind a reverse proxy, honour X-Forwarded-Proto/-For. Off by default: they're spoofable.
     trust_proxy: bool = field(default_factory=lambda: _bool("MEMORY_HUB_TRUST_PROXY", False))
-    # None = auto (Secure unless the request came over plain HTTP from localhost/RFC1918).
+    # Which peers may set X-Forwarded-For/-Proto (comma-separated IPs/CIDRs; "*" = anyone, which is unsafe). Only used when
+    # trust_proxy is on. Empty = loopback + private ranges. Set it to just your proxy/ingress (docs/SECURITY.md § Network edge).
+    trusted_proxies: str = field(
+        default_factory=lambda: os.environ.get("MEMORY_HUB_TRUSTED_PROXIES", "").strip()
+    )
+    # Extra Host header values to accept (comma-separated). Setting this turns Host checking on: the public URL's host,
+    # loopback and /healthz are always allowed. Empty = no Host enforcement.
+    allowed_hosts: str = field(default_factory=lambda: os.environ.get("MEMORY_HUB_ALLOWED_HOSTS", "").strip())
+    # Strict-Transport-Security max-age in seconds, sent only when the public URL is https. 0 = don't send it.
+    hsts_max_age: int = field(default_factory=lambda: _int("MEMORY_HUB_HSTS_MAX_AGE", 31536000))
+    # None = auto (Secure unless the request came over plain HTTP from localhost/RFC1918). An https public URL always wins.
     cookie_secure: bool | None = field(
         default_factory=lambda: (
             _bool("MEMORY_HUB_COOKIE_SECURE", True) if os.environ.get("MEMORY_HUB_COOKIE_SECURE") else None
@@ -90,6 +103,29 @@ class Settings:
     remote_plugins_file: str = field(
         default_factory=lambda: os.environ.get("MEMORY_HUB_REMOTE_PLUGINS_FILE", "")
     )
+
+    @property
+    def public_https(self) -> bool:
+        return self.public_url.lower().startswith("https://")
+
+    @property
+    def session_cookie_name(self) -> str:
+        """`__Host-` (Secure, Path=/, no Domain: subdomains and plain-http origins can't plant it) whenever the cookie is always Secure."""
+        return (
+            "__Host-acm_session" if self.public_https and self.cookie_secure is not False else "acm_session"
+        )
+
+    @property
+    def forwarded_allow_ips(self) -> str | None:
+        """What uvicorn is told to trust for X-Forwarded-*. With a list, uvicorn takes the right-most *untrusted* hop,
+        which a client can't forge; with "*" it takes the left-most, which it can."""
+        if not self.trust_proxy:
+            return None
+        return self.trusted_proxies or DEFAULT_TRUSTED_PROXIES
+
+    @property
+    def extra_allowed_hosts(self) -> frozenset[str]:
+        return frozenset(h.strip().lower() for h in self.allowed_hosts.split(",") if h.strip())
 
     @property
     def oidc_enabled(self) -> bool:

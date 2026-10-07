@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     ports:
       # Loopback by default. To serve your LAN set MEMORY_HUB_BIND=0.0.0.0; for anything beyond a LAN put a TLS
-      # reverse proxy in front and set MEMORY_HUB_TRUST_PROXY=true.
+      # reverse proxy in front and set MEMORY_HUB_TRUST_PROXY=true plus MEMORY_HUB_TRUSTED_PROXIES.
       - "${MEMORY_HUB_BIND:-127.0.0.1}:${MEMORY_HUB_PORT:-8000}:8000"
     volumes:
       - hub-data:/data
@@ -26,6 +26,9 @@ services:
       MEMORY_HUB_PUBLIC_URL: ${MEMORY_HUB_PUBLIC_URL:-http://localhost:8000}
       MEMORY_HUB_ADMIN_EMAIL: ${MEMORY_HUB_ADMIN_EMAIL:-}
       MEMORY_HUB_TRUST_PROXY: ${MEMORY_HUB_TRUST_PROXY:-false}
+      MEMORY_HUB_TRUSTED_PROXIES: ${MEMORY_HUB_TRUSTED_PROXIES:-}  # who may set X-Forwarded-*: your proxy's IP/CIDR, never *
+      MEMORY_HUB_ALLOWED_HOSTS: ${MEMORY_HUB_ALLOWED_HOSTS:-}  # optional Host allow-list (public URL + loopback always pass)
+      MEMORY_HUB_HSTS_MAX_AGE: ${MEMORY_HUB_HSTS_MAX_AGE:-31536000}  # sent only when MEMORY_HUB_PUBLIC_URL is https; 0 = off
       MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS: ${MEMORY_HUB_CONSOLIDATE_INTERVAL_HOURS:-24}
       MEMORY_HUB_PLUGINS: ${MEMORY_HUB_PLUGINS:-true}  # false = emergency off-switch for every plugin
       MEMORY_HUB_REMOTE_PLUGINS: ${MEMORY_HUB_REMOTE_PLUGINS:-}  # JSON list of {key,url,secret_env}; see docs/PLUGINS.md

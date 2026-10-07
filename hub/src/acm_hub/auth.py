@@ -28,7 +28,6 @@ from .security import (
 )
 
 log = logging.getLogger("acm_hub.auth")
-SESSION_COOKIE = "acm_session"
 _LAST_USED_GRANULARITY = timedelta(seconds=60)
 
 
@@ -42,18 +41,19 @@ class AuthError(Exception):
 # --- request helpers --------------------------------------------------------------------------------
 
 
-def request_is_https(scheme: str, headers: dict[str, str], settings: Settings) -> bool:
-    if scheme == "https":
-        return True
-    return settings.trust_proxy and headers.get("x-forwarded-proto", "").lower() == "https"
+def request_is_https(scheme: str) -> bool:
+    """Only the ASGI scheme counts. Behind a proxy, uvicorn rewrites it from X-Forwarded-Proto *for the peers it was
+    told to trust* (MEMORY_HUB_TRUSTED_PROXIES); reading that header here as well would let any direct caller claim https."""
+    return scheme == "https"
 
 
-def cookie_should_be_secure(
-    scheme: str, headers: dict[str, str], client_host: str | None, settings: Settings
-) -> bool:
+def cookie_should_be_secure(scheme: str, client_host: str | None, settings: Settings) -> bool:
     if settings.cookie_secure is not None:
         return settings.cookie_secure
-    return request_is_https(scheme, headers, settings) or not is_local_or_private(client_host)
+    # Served over https: never send the cookie in the clear, whatever the last hop looks like (a proxy's is plain http).
+    if settings.public_https:
+        return True
+    return request_is_https(scheme) or not is_local_or_private(client_host)
 
 
 # --- API tokens -------------------------------------------------------------------------------------
@@ -66,14 +66,13 @@ def authenticate_bearer(
     authorization: str | None,
     *,
     scheme: str,
-    headers: dict[str, str],
     client_host: str | None,
 ) -> Principal:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise AuthError(401, "Missing bearer token.")
     raw = authorization[7:].strip()
     # Tokens are never accepted over plaintext HTTP, except on loopback / a private LAN.
-    if not request_is_https(scheme, headers, settings) and not is_local_or_private(client_host):
+    if not request_is_https(scheme) and not is_local_or_private(client_host):
         raise AuthError(
             400,
             "API tokens are only accepted over HTTPS (plain HTTP is allowed from localhost and private networks).",
@@ -210,7 +209,22 @@ def recently_authenticated(ws: WebSession, minutes: int = 10) -> bool:
     return utcnow() - ws.authenticated_at <= timedelta(minutes=minutes)
 
 
-def csrf_ok(ws: WebSession, supplied: str | None, origin: str | None, host: str | None) -> bool:
+def fetch_site_ok(fetch_site: str | None) -> bool:
+    """Browsers say where a request came from in Sec-Fetch-Site. Only our own pages (`same-origin`) or the person typing
+    the address (`none`) may submit; `same-site` (a sibling subdomain) and `cross-site` may not. Absent = an old browser
+    or a script, which the other checks still cover."""
+    return fetch_site is None or fetch_site.lower() in {"same-origin", "none"}
+
+
+def csrf_ok(
+    ws: WebSession,
+    supplied: str | None,
+    origin: str | None,
+    host: str | None,
+    fetch_site: str | None = None,
+) -> bool:
+    if not fetch_site_ok(fetch_site):
+        return False
     if origin and origin != "null":
         if urlsplit(origin).netloc != (host or ""):
             return False

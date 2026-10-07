@@ -31,9 +31,11 @@ spec:
             - secretRef: { name: memory-hub-secrets }
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true # the hub writes only to /data (SQLite) and /tmp
             capabilities: { drop: ["ALL"] }
           volumeMounts:
             - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
           startupProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 3
@@ -48,6 +50,8 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits: { memory: 512Mi }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
   volumeClaimTemplates:
     - metadata: { name: data }
       spec:

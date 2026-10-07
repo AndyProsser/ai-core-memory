@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import timedelta
 
@@ -11,10 +12,10 @@ from sqlmodel import Session, col, select
 
 from .. import oidc
 from ..auth import (
-    SESSION_COOKIE,
     check_setup_code,
     create_web_session,
     end_web_session,
+    fetch_site_ok,
     has_admin,
     lookup_web_session,
 )
@@ -31,6 +32,7 @@ from ..security import (
 )
 from .deps import Ctx, get_db, render, require_user, set_session_cookie, user_csrf
 
+log = logging.getLogger("acm_hub.auth")
 router = APIRouter()
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 OIDC_BINDING_COOKIE = "acm_oidc"
@@ -44,9 +46,11 @@ def _safe_next(nxt: str | None) -> str:
 
 
 def _same_origin(request: Request) -> bool:
+    if not fetch_site_ok(request.headers.get("sec-fetch-site")):
+        return False
     origin = request.headers.get("origin")
     if not origin:
-        return True  # non-browser clients; SameSite=Lax covers browsers that omit it
+        return True  # non-browser clients; browsers always send Origin on a cross-site POST
     from urllib.parse import urlsplit
 
     return origin != "null" and urlsplit(origin).netloc == request.headers.get("host", "")
@@ -84,7 +88,9 @@ def home() -> RedirectResponse:
 def login_form(request: Request, next: str = "", db: Session = Depends(get_db)):  # noqa: A002, ANN201
     if not has_admin(db):
         return RedirectResponse("/setup", status_code=303)
-    if lookup_web_session(db, request.app.state.settings, request.cookies.get(SESSION_COOKIE)):
+    if lookup_web_session(
+        db, request.app.state.settings, request.cookies.get(request.app.state.settings.session_cookie_name)
+    ):
         return RedirectResponse(_safe_next(next), status_code=303)
     return _login_page(request, db, next_url=_safe_next(next) if next else "")
 
@@ -101,8 +107,8 @@ def login(
         return _login_page(request, db, error="Request blocked (cross-origin).", status=403)
     throttle = request.app.state.login_throttle
     email_n = email.strip().lower()
-    keys = (f"acct:{email_n}", f"ip:{_ip(request)}")
-    if any(throttle.blocked(k) for k in keys):
+    ip = _ip(request)
+    if throttle.attempt_blocked(email_n, ip):
         return _login_page(
             request, db, error="Too many failed attempts. Try again in a few minutes.", status=429
         )
@@ -113,8 +119,7 @@ def login(
         user.password_hash if user and allowed else None, password
     )  # constant-ish time for unknown users
     if not (ok and user and allowed):
-        for k in keys:
-            throttle.failure(k)
+        throttle.attempt_failed(email_n, ip)
         return _login_page(
             request,
             db,
@@ -122,8 +127,7 @@ def login(
             next_url=_safe_next(next) if next else "",
             status=401,
         )
-    for k in keys:
-        throttle.success(k)
+    throttle.attempt_succeeded(email_n, ip)
     raw, _ = create_web_session(db, user, request.app.state.settings)
     db.commit()
     resp = RedirectResponse(_safe_next(next), status_code=303)
@@ -134,9 +138,13 @@ def login(
 @router.post("/logout")
 def logout(request: Request, ctx: Ctx = Depends(user_csrf)) -> RedirectResponse:
     request.app.state.unlock_cache.drop(ctx.ws.id)  # signing out locks encrypted memory
-    end_web_session(ctx.db, request.cookies.get(SESSION_COOKIE))
+    end_web_session(ctx.db, request.cookies.get(request.app.state.settings.session_cookie_name))
     resp = RedirectResponse("/login", status_code=303)
-    resp.delete_cookie(SESSION_COOKIE, path="/")
+    cfg = request.app.state.settings
+    # A `__Host-` cookie can only be cleared by a Set-Cookie that is itself Secure.
+    resp.delete_cookie(
+        cfg.session_cookie_name, path="/", secure=cfg.session_cookie_name.startswith("__Host-"), httponly=True
+    )
     return resp
 
 
@@ -236,7 +244,7 @@ async def _start_oidc(request: Request, db: Session, *, reauth: bool):  # noqa: 
         binding,
         httponly=True,
         samesite="lax",
-        secure=settings.public_url.startswith("https"),
+        secure=settings.public_https,
         max_age=600,
         path="/auth/oidc",
     )
@@ -288,10 +296,9 @@ async def oidc_callback(
                 settings, client, code=code, verifier=verifier, nonce=nonce
             )
         except Exception as e:  # noqa: BLE001
-            return bad(
-                f"Single sign-on failed: {e}" if isinstance(e, oidc.OIDCError) else "Single sign-on failed.",
-                401,
-            )
+            # The reason goes to the server log, not the browser: it can name the provider's internals.
+            log.warning("OIDC sign-in failed: %s", e if isinstance(e, oidc.OIDCError) else type(e).__name__)
+            return bad("Single sign-on failed. Ask the operator to check the hub's log.", 401)
 
     key = oidc.identity_key(claims)
     email = str(claims.get("email") or "").strip().lower()
@@ -329,7 +336,7 @@ async def oidc_callback(
                     ),
                     httponly=True,
                     samesite="lax",
-                    secure=settings.public_url.startswith("https"),
+                    secure=settings.public_https,
                     max_age=LINK_TTL,
                     path="/auth/oidc/link",
                 )
@@ -347,7 +354,9 @@ async def oidc_callback(
     if not user.is_active:
         return bad("This account has been deactivated. Ask an admin.", 403)
     if reauth:
-        found = lookup_web_session(db, settings, request.cookies.get(SESSION_COOKIE))
+        found = lookup_web_session(
+            db, settings, request.cookies.get(request.app.state.settings.session_cookie_name)
+        )
         if not found or found[0].id != user.id:
             return bad("Re-authentication didn't match the signed-in account.", 403)
         found[1].authenticated_at = utcnow()
@@ -401,11 +410,8 @@ def oidc_link(request: Request, password: str = Form(""), db: Session = Depends(
         return _to_login(request)
     user, key = pending
     throttle = request.app.state.login_throttle
-    keys = (
-        f"acct:{user.email}",
-        f"ip:{_ip(request)}",
-    )  # the same budget as /login, so this isn't a second guess path
-    if any(throttle.blocked(k) for k in keys):
+    ip = _ip(request)  # the same budget as /login, so this isn't a second guess path
+    if throttle.attempt_blocked(user.email, ip):
         return _link_page(
             request, user, error="Too many failed attempts. Try again in a few minutes.", status=429
         )
@@ -419,11 +425,9 @@ def oidc_link(request: Request, password: str = Form(""), db: Session = Depends(
     ):
         return _link_page(request, user, error="This account can't be linked. Ask an admin.", status=403)
     if not verify_password(user.password_hash, password):
-        for k in keys:
-            throttle.failure(k)
+        throttle.attempt_failed(user.email, ip)
         return _link_page(request, user, error="Wrong password.", status=401)
-    for k in keys:
-        throttle.success(k)
+    throttle.attempt_succeeded(user.email, ip)
     user.external_id = key
     db.add(user)
     raw, _ = create_web_session(db, user, request.app.state.settings)

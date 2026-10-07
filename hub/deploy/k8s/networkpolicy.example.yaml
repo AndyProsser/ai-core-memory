@@ -1,0 +1,24 @@
+# Optional (not in kustomization.yaml; needs a CNI that enforces NetworkPolicy — k3s's bundled one does).
+# Only the ingress controller may reach the hub pod. That is what makes MEMORY_HUB_TRUSTED_PROXIES mean something: any
+# other pod that could connect directly could write its own X-Forwarded-For and dodge the per-IP limits.
+# Adjust the namespace/pod labels to your ingress controller (k3s Traefik shown). Egress is left open: plugins, OIDC
+# discovery and remote plugins all call out, and which of those you use is yours to decide.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: memory-hub-ingress-only
+  labels: { app.kubernetes.io/name: memory-hub }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: memory-hub }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: traefik }
+      ports:
+        - { protocol: TCP, port: 8000 }
+    # Other things in the cluster that legitimately call the hub (an MCP client pod, the HomeLab homepage widget, ...)
+    # need their own `from:` entry here, or they will be refused.

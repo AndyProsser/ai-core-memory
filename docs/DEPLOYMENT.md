@@ -80,10 +80,17 @@ docker compose logs memory-hub | grep -i "setup code"   # first-run code; then o
 with these deliberate defaults:
 
 - **Bound to loopback** (`127.0.0.1:8000`). To serve your LAN, set `MEMORY_HUB_BIND=0.0.0.0`;
-  to serve anything beyond a LAN, put a TLS reverse proxy in front and set
-  `MEMORY_HUB_TRUST_PROXY=true` (API tokens are refused over plain HTTP from non-private
-  addresses — see [SECURITY.md](SECURITY.md)).
+  to serve anything beyond a LAN, put a TLS reverse proxy in front, set `MEMORY_HUB_PUBLIC_URL` to its `https://`
+  address, and set `MEMORY_HUB_TRUST_PROXY=true` **with** `MEMORY_HUB_TRUSTED_PROXIES` naming the proxy (its IP or
+  the Docker network's CIDR). API tokens are refused over plain HTTP from non-private addresses, and the session
+  cookie is always `Secure` once the public URL is https — see
+  [SECURITY.md § Network edge](SECURITY.md#network-edge-proxy-trust-headers-and-limits). Have the proxy redirect
+  http to https and don't publish the hub's own port: the container should only be reachable from the proxy.
 - `MEMORY_HUB_SECRET_KEY` is **required** — compose refuses to start without it.
+- `MEMORY_HUB_TRUSTED_PROXIES` (default: loopback and private ranges, with a log warning) is who may set
+  `X-Forwarded-*` when `MEMORY_HUB_TRUST_PROXY=true`. Never `*`. `MEMORY_HUB_ALLOWED_HOSTS` (default empty = off)
+  makes the hub refuse any `Host` that isn't the public URL, loopback or listed. `MEMORY_HUB_HSTS_MAX_AGE`
+  (default `31536000`, `0` = don't send HSTS) applies only with an https public URL.
 - `MEMORY_HUB_PLUGINS` (default `true`) is the master switch for plugin execution.
 - `MEMORY_HUB_EGRESS_RESOLVE_PRIVATE` (default `false`) lets plugins use plain `http://` to a hostname whose every
   DNS answer is private (compose service names, Kubernetes Services, LAN hostnames) instead of only literal private
@@ -150,7 +157,14 @@ the same file over a network filesystem, so:
 
 Ready-to-edit manifests live in [`hub/deploy/k8s/`](../hub/deploy/k8s/): `configmap.yaml`,
 `statefulset.yaml` (one replica, non-root, probes on `/healthz`), `service.yaml`, `backup-cronjob.yaml`,
-plus `secret.example.yaml` and `ingress.example.yaml` (TLS — tokens and sessions must only travel over it).
+plus `secret.example.yaml`, `ingress.example.yaml` (TLS — tokens and sessions must only travel over it) and
+`networkpolicy.example.yaml` (only the ingress controller may reach the pod — which is what makes
+`MEMORY_HUB_TRUSTED_PROXIES` meaningful, because anything else that can reach the pod can forge `X-Forwarded-For`).
+
+Hardening that is on in the manifests: `readOnlyRootFilesystem` (only `/data` and an `emptyDir` `/tmp` are
+writable), no privilege escalation, all capabilities dropped, `RuntimeDefault` seccomp, and
+`MEMORY_HUB_TRUSTED_PROXIES` set to the ingress's pod range. **Edit that value to match your cluster** — the default
+in the ConfigMap is k3s's pod CIDR (`10.42.0.0/16`); narrow it to the ingress controller's own pod range if you can.
 
 ```bash
 kubectl create secret generic memory-hub-secrets \
@@ -170,7 +184,12 @@ ReadWriteOnce. Copy backups off the cluster as well.
 checked by script, and the backup CronJob's exact script was run inside the built image against a live hub
 volume (as uid 1000, with the backup volume owned by the pod's `fsGroup` — a bare Docker volume is root-owned and
 fails, which is what `fsGroup: 1000` is for), producing a `0600` copy that passes `PRAGMA integrity_check`. The
-manifests were **not** applied to a real cluster. Treat them as a validated starting point.
+manifests were **not** applied to a real cluster. Treat them as a validated starting point. The edge hardening
+was additionally exercised on the built image with `docker run --read-only --tmpfs /tmp --cap-drop ALL` and an https
+public URL: it starts and serves, every response (including `/mcp`'s 401) carries the headers and HSTS, an 11 MB body
+gets `413`, an unlisted `Host` gets `400` while `/healthz` answers any `Host`. The `NetworkPolicy` and the
+`securityContext`/`emptyDir` wiring are validated as YAML only — if a real cluster reports a "read-only file system"
+error on first start, the path in it is the one to add an `emptyDir` for.
 
 ### MCP OAuth (optional)
 
