@@ -37,7 +37,9 @@ p { margin: .5rem 0; } .muted { color: var(--text-muted); } .small { font-size: 
 /* shell */
 .shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
 .rail { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: .25rem; padding: 1.25rem .9rem; background: var(--surface); border-right: 1px solid var(--border); }
-.brand { font-weight: 650; padding: 0 .6rem 1rem; letter-spacing: .01em; }
+.hero-logo { display: block; margin: 0 auto 1rem; }
+.logo { width: 22px; height: 22px; flex: none; background: url(/static/favicon.svg) center / contain no-repeat; }
+.brand { display: flex; align-items: center; gap: .5rem; font-weight: 650; padding: 0 .6rem 1rem; letter-spacing: .01em; }
 .rail a.nav { display: flex; justify-content: space-between; align-items: center; padding: .5rem .6rem; border-radius: var(--radius); color: var(--text); text-decoration: none; }
 .rail a.nav:hover { background: var(--accent-soft); }
 .rail a.nav[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
@@ -64,7 +66,9 @@ textarea { min-height: 9rem; resize: vertical; font-family: ui-monospace, SFMono
 label { display: block; font-weight: 600; font-size: .9rem; margin: .9rem 0 .25rem; }
 label.inline { display: inline-flex; gap: .4rem; align-items: center; font-weight: 400; margin: 0; }
 .hint { color: var(--text-muted); font-size: .85rem; margin: .2rem 0 0; }
-.row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-start; } .row > * { flex: 1 1 140px; } .row > .shrink { flex: 0 0 auto; }
+.row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-start; } .row > * { flex: 1 1 140px; } .row > .shrink { flex: 0 0 auto; align-self: flex-end; }
+.version { font-size: .75rem; color: var(--text-muted); padding: .5rem .6rem 0; }
+.version.centered { text-align: center; margin-top: 2rem; }
 .actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: 1.1rem; }
 
 /* surfaces */

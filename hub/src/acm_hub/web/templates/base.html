@@ -7,6 +7,9 @@
   <meta name="color-scheme" content="light dark">
   <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
   {% if user %}<meta name="csrf" content="{{ csrf_token }}">{% endif %}
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <title>{% block title %}Memory hub{% endblock %} · Memory hub</title>
   <script src="/static/theme-init.js"></script>
   <link rel="stylesheet" href="/static/app.css">
@@ -15,7 +18,7 @@
 {% if user %}
 <div class="shell">
   <nav class="rail" aria-label="Main">
-    <div class="brand">◆ Memory hub</div>
+    <div class="brand"><span class="logo" aria-hidden="true"></span> Memory hub</div>
     {% set path = request.url.path %}
     <a class="nav" href="/memory" {% if path.startswith('/memory') %}aria-current="page"{% endif %}>Memory</a>
     <a class="nav" href="/review" {% if path.startswith('/review') %}aria-current="page"{% endif %}>Review{% set waiting = (inbox_count or 0) + (proposal_count or 0) %}{% if waiting %} <span class="count" aria-label="{{ waiting }} waiting">{{ waiting }}</span>{% endif %}</a>
@@ -30,6 +33,7 @@
         <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
       </div>
       <form method="post" action="/logout">{{ csrf() }}<button class="link small" type="submit">Sign out {{ user.email }}</button></form>
+      <div class="version" title="Memory hub version">Memory hub v{{ app_version }}</div>
     </div>
   </nav>
   <main id="main">
@@ -56,7 +60,7 @@
   <div class="actions"><button type="button" data-close-dialog>Close</button></div>
 </dialog>
 {% else %}
-<main class="narrow">{% block public %}{% endblock %}</main>
+<main class="narrow">{% block public %}{% endblock %}<p class="version centered">Memory hub v{{ app_version }}</p></main>
 {% endif %}
 <script src="/static/htmx.min.js"></script>
 <script src="/static/app.js"></script>

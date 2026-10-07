@@ -12,7 +12,7 @@ from pathlib import Path
 import anyio
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import text
@@ -235,6 +235,10 @@ def create_app(settings: Settings | None = None, *, http_client_factory=None) ->
         return JSONResponse(
             {"status": "ok" if ok else "starting", "version": __version__, "time": int(time.time())}
         )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        return FileResponse(WEB_DIR / "static" / "favicon.ico", media_type="image/x-icon")
 
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 

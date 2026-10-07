@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Memory hub">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <!-- one hemisphere, drawn for the left side and mirrored for the right -->
+    <path id="lobe" d="M247 138C205 120 158 132 144 168 112 176 94 208 104 238 84 262 92 302 120 318 120 352 154 380 190 372 206 392 236 392 247 374Z"/>
+    <g id="net" stroke-linecap="round">
+      <path d="M256 256 206 206M256 256 196 292M206 206 150 214M206 206 214 160M196 292 140 280M196 292 206 344M206 206 196 292" fill="none" stroke="#fff" stroke-width="7" opacity=".75"/>
+      <g fill="#fff"><circle cx="206" cy="206" r="13"/><circle cx="196" cy="292" r="13"/><circle cx="150" cy="214" r="9"/><circle cx="214" cy="160" r="9"/><circle cx="140" cy="280" r="9"/><circle cx="206" cy="344" r="9"/></g>
+    </g>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g fill="#fff" fill-opacity=".14" stroke="#fff" stroke-width="12" stroke-linejoin="round">
+    <use href="#lobe"/><use href="#lobe" transform="translate(512 0) scale(-1 1)"/>
+  </g>
+  <use href="#net"/><use href="#net" transform="translate(512 0) scale(-1 1)"/>
+  <!-- links out to the other things the hub talks to -->
+  <g stroke="#fff" stroke-width="7" stroke-linecap="round" opacity=".75" fill="none">
+    <path d="M214 160 150 98M298 160 362 98M140 280 78 330M372 280 434 330"/>
+  </g>
+  <g fill="#fff"><circle cx="150" cy="98" r="14"/><circle cx="362" cy="98" r="14"/><circle cx="78" cy="330" r="14"/><circle cx="434" cy="330" r="14"/></g>
+  <!-- the hub itself -->
+  <circle cx="256" cy="256" r="30" fill="#fff"/><circle cx="256" cy="256" r="14" fill="#7c3aed"/>
+</svg>

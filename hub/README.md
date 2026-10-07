@@ -1,4 +1,6 @@
-# Memory hub
+<p align="center"><img src="../docs/assets/logo.svg" alt="Memory hub logo" width="96" height="96"></p>
+
+<h1 align="center">Memory hub</h1>
 
 The self-hostable memory hub: a central store for AI-assistant memory with a web UI, an MCP
 endpoint, and an offline CLI. Design: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) ·

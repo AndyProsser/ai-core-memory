@@ -15,7 +15,7 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup
 from sqlmodel import Session, func, select
 
-from .. import crypto_store
+from .. import __version__, crypto_store
 from ..access import AccessError, NotFound, Principal, principal_for_user
 from ..auth import SESSION_COOKIE, cookie_should_be_secure, csrf_ok, has_admin, lookup_web_session
 from ..models import InboxItem, InstanceSettings, User, WebSession
@@ -42,6 +42,7 @@ def render_markdown(text: str) -> Markup:
     return Markup(_md.render(text or ""))  # noqa: S704 — html disabled; link schemes validated by markdown-it
 
 
+templates.env.globals["app_version"] = __version__
 templates.env.filters["md"] = render_markdown
 templates.env.filters["date"] = lambda d: d.strftime("%Y-%m-%d") if d else "—"
 templates.env.filters["datetime"] = lambda d: d.strftime("%Y-%m-%d %H:%M") if d else "—"

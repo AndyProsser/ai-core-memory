@@ -2,7 +2,7 @@
 {% from "_macros.html" import csrf with context %}
 {% block title %}Sign in{% endblock %}
 {% block public %}
-<h1>Sign in</h1><p class="muted">Your memory hub.</p>
+<img class="hero-logo" src="/static/logo-animated.svg" alt="Memory hub" width="96" height="96"><h1>Sign in</h1><p class="muted">Your memory hub.</p>
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
 {% if oidc_enabled %}<p><a class="btn primary" href="/login/oidc">Sign in with single sign-on</a></p>{% endif %}
 {% if local_enabled %}

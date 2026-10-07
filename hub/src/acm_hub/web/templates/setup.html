@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Set up{% endblock %}
 {% block public %}
-<h1>Set up your hub</h1>
+<img class="hero-logo" src="/static/logo-animated.svg" alt="Memory hub" width="96" height="96"><h1>Set up your hub</h1>
 <p class="muted">Create the first admin. This stays available until an admin exists.</p>
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
 <form method="post" action="/setup" class="card">
